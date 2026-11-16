@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Классификатор электрометрических моделей фаций</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse at 40% 20%, #28434a, #10202c 76%); color: #f2e8d5; font: 15px 'Segoe UI', sans-serif; }
+  main { max-width: 1460px; margin: auto; padding: clamp(16px, 4vw, 46px); }
+  h1 { margin: 0 0 24px; font: 400 clamp(28px, 4vw, 46px)/1.12 Georgia, serif; text-wrap: balance; }
+  .scene { display: grid; grid-template-columns: minmax(190px, .285fr) minmax(0, .715fr); align-items: start; gap: 12px; }
+  .window { min-width: 0; overflow-x: auto; border: 1px solid #587078; border-radius: 14px; background: linear-gradient(150deg, #223943, #152732 70%); }
+  canvas { display: block; width: 100%; }
+  #well { aspect-ratio: 320 / 510; }
+  #tablet { min-width: 540px; aspect-ratio: 800 / 510; }
+  @media (max-width: 820px) {
+    .scene { grid-template-columns: 1fr; }
+    .window:first-child { width: min(100%, 360px); }
+  }
+</style>
+<main>
+  <h1>Классификатор электрометрических моделей фаций</h1>
+  <div class="scene">
+    <div class="window"><canvas id="well" role="img" aria-label="Зонд поднимается от забоя, записывает SP и гамма-каротаж снизу вверх и передаёт данные инженеру на планшет."></canvas></div>
+    <div class="window" tabindex="0" aria-label="Экран планшета инженера"><canvas id="tablet" role="img" aria-label="Каротажные кривые разбиваются на три интервала. Для каждого классификатор показывает распределение вероятностей по фациям. На выходном каротаже интервалы размечены фациями с максимальной вероятностью: 1, 8 и 2. Значения демонстрационные."></canvas></div>
+  </div>
+</main>
+<script>
+  'use strict';
+  const dimensions = [[320,510],[800,510]];
+  const canvases = [document.querySelector('#well'),document.querySelector('#tablet')];
+  const contexts = canvases.map(canvas => canvas.getContext('2d'));
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  const facies = [
+    {id:1, color:'#78d5bf'},
+    {id:2, color:'#eab673'},
+    {id:5, color:'#b8a5e2'},
+    {id:8, color:'#7eafe7'},
+  ];
+  const intervals = [
+    {from:0, to:.22, probabilities:[.72,.12,.09,.07]},
+    {from:.22, to:.71, probabilities:[.15,.18,.11,.56]},
+    {from:.71, to:1, probabilities:[.17,.48,.27,.08]},
+  ].map(interval => {
+    const {probabilities} = interval;
+    const mostLikely = probabilities.indexOf(Math.max(...probabilities));
+    return {...interval, winner:facies[mostLikely]};
+  });
+  const logTop = 111;
+  const logHeight = 340;
+  const cycle = 18900;
+  const recordDuration = 4900;
+  const segmentationTime = 5350;
+  const classificationTime = 6100;
+  const intervalDuration = 2700;
+  const clamp = value => Math.max(0,Math.min(1,value));
+
+  function box(g,x,y,w,h,fill,stroke,radius=5) {
+    g.beginPath();
+    g.roundRect(x,y,w,h,radius);
+    g.fillStyle=fill;
+    g.fill();
+    if (stroke) { g.strokeStyle=stroke; g.lineWidth=1; g.stroke(); }
+  }
+
+  function path(g,points,color,width=1) {
+    g.beginPath();
+    points.forEach(([x,y],i) => i ? g.lineTo(x,y) : g.moveTo(x,y));
+    g.strokeStyle=color;
+    g.lineWidth=width;
+    g.stroke();
+  }
+
+  function label(g,value,x,y,color='#ecdfc5',size=14,weight=500,align='center') {
+    g.font=weight+' '+size+'px Segoe UI, sans-serif';
+    g.textAlign=align;
+    g.fillStyle=color;
+    g.fillText(value,x,y);
+  }
+
+  function circle(g,x,y,r,fill) {
+    g.beginPath();
+    g.arc(x,y,r,0,Math.PI*2);
+    g.fillStyle=fill;
+    g.fill();
+  }
+
+  function arrow(g,x,y,end,color) {
+    path(g,[[x,y],[end,y],[end-5,y-4]],color,1.4);
+    path(g,[[end,y],[end-5,y+4]],color,1.4);
+  }
+
+  function well(g,time,recorded) {
+    g.clearRect(0,0,320,510);
+    label(g,'Скважина',22,36,'#e9d3a7',22,600,'left');
+    const formations = ['#5a534b','#735f48','#3d6260','#58584f','#476263'];
+    formations.forEach((color,i) => {
+      const y=171+i*58;
+      g.beginPath();
+      g.moveTo(0,y);
+      g.bezierCurveTo(103,y-22,192,y+15,320,y-4);
+      g.lineTo(320,y+68);
+      g.lineTo(0,y+68);
+      g.fillStyle=color;
+      g.fill();
+    });
+    path(g,[[0,170],[320,170]],'#9b9c78',3);
+    box(g,92,159,40,305,'#132730','#9bb1ae',2);
+    path(g,[[102,173],[102,456],[122,456],[122,173]],'#607e7e',2);
+    box(g,85,153,54,17,'#7f7962','#c4b38c',3);
+    path(g,[[79,151],[111,93],[142,151]],'#c1a77a',3);
+    path(g,[[90,133],[131,133]],'#a99776',2);
+    circle(g,111,97,7,'#c8ab79');
+    const probeY = 436-recorded*262;
+    path(g,[[112,104],[112,probeY]],'#dfcd9d',1.4);
+    box(g,106,probeY,12,22,'#d6aa68','#fee0a1',3);
+    circle(g,112,probeY+15,2.5,'#e9ffd2');
+    label(g,'Зонд ГИС',147,probeY+14,'#f2dfb4',13,600,'left');
+    circle(g,224,99,12,'#d5ae8b');
+    box(g,209,83,29,13,'#edbf71',null,6);
+    path(g,[[207,95],[241,95]],'#f2cb83',3);
+    box(g,212,112,24,38,'#926c46','#d3a96b',5);
+    path(g,[[218,146],[216,167]],'#899d9d',6);
+    path(g,[[229,146],[234,167]],'#899d9d',6);
+    path(g,[[232,117],[242,131],[252,122]],'#d5ae8b',5);
+    box(g,244,108,22,16,'#172c35','#a4d4c9',3);
+    if (time < recordDuration) {
+      const transfer = time % 1050 / 1050;
+      path(g,[[121,115],[245,115]],'#85c3b864',1);
+      circle(g,121+transfer*124,115,3,'#b2efdb');
+      arrow(g,268,115,309,'#83cbbb');
+    }
+    label(g,'Передача на планшет',235,70,'#b2d4cc',12);
+  }
+
+  function track(g,x,progress) {
+    const w = 48;
+    for (const [index,color] of ['#83dfc6','#e6bb76'].entries()) {
+      const left = x+index*w;
+      box(g,left,logTop,w,logHeight,'#122731','#547078',0);
+      for (let row=1;row<10;row++) {
+        const y=logTop+row*logHeight/10;
+        path(g,[[left,y],[left+w,y]],'#6d88883a');
+      }
+      label(g,index ? 'Gamma ray' : 'SP',left+w/2,100,color,11,600);
+      const points = Array.from({length:Math.floor(progress*260)+1},(_,i) => {
+        const d=(260-i)/260;
+        // SP deflects toward the sand line as gamma ray decreases.
+        const channel = clamp((d - intervals[1].from) / .025) * clamp((intervals[1].to - d) / .009);
+        const silt = clamp((d - intervals[2].from) / .19);
+        const shale = .82 - channel * (.32 + .22 * clamp((d - intervals[1].from) / .49)) - .15 * silt;
+        const texture = .027 * Math.sin(d * 105 + index) + .016 * Math.sin(d * 269 + index * 2);
+        const signal = clamp((index ? shale : 1 - .86 * shale) + texture);
+        return [left+5+signal*(w-10),logTop+d*logHeight];
+      });
+      if (points.length>1) path(g,points,color,1.4);
+    }
+  }
+
+  function histogram(g,interval,center,progress) {
+    const floor = center+22;
+    const x = 338;
+    path(g,[[x-8,floor],[x+174,floor]],'#6f8b8d');
+    interval.probabilities.forEach((probability,i) => {
+      const barX=x+i*44;
+      const h=probability*68*progress;
+      if (h>0) box(g,barX,floor-h,26,h,facies[i].color,null,2);
+      if (progress>.88) label(g,Math.round(probability*100)+'%',barX+13,floor-h-5,'#f1e8d4',12,600);
+      label(g,'Ф'+facies[i].id,barX+13,floor+16,facies[i].color,12,600);
+    });
+  }
+
+  function tablet(g,time,recorded) {
+    g.clearRect(0,0,800,510);
+    label(g,'Планшет инженера',20,36,'#e9d3a7',22,600,'left');
+    label(g,'Интервалы каротажа',100,74);
+    label(g,'Классификатор',239,74);
+    label(g,'Вероятности фаций',425,74);
+    label(g,'Каротаж с фациальной разметкой',672,74);
+    track(g,53,recorded);
+    track(g,568,recorded);
+    box(g,666,logTop,112,logHeight,'#182e38','#547078',0);
+    label(g,'Фация',722,100,'#c0d4d1',11,600);
+    label(g,'Глубина, м',38,99,'#b1c6c4',9);
+    for (const depth of [0,25,50,75,100]) {
+      label(g,depth,44,logTop+depth/100*logHeight+4,'#c0d3d0',10,500,'right');
+    }
+    intervals.forEach((interval,index) => {
+      const y = logTop+interval.from*logHeight;
+      const h = (interval.to-interval.from)*logHeight;
+      const center = y+h/2;
+      const segmented = time>=segmentationTime+index*180;
+      const age = time-classificationTime-index*intervalDuration;
+      const active = age>=0 && age<intervalDuration;
+      if (segmented) {
+        box(g,53,y,96,h,active?'#e7bd7028':'#bdcdb617',active?'#eac58d':'#8ba49c',0);
+        label(g,index+1,161,center+4,'#e2c694',12,600);
+        arrow(g,172,center,190,active?'#e6bf81':'#58767a');
+      }
+      box(g,191,center-22,100,44,'#0d1921',active?'#dfbe82':'#526d72',6);
+      label(g,'Интервал '+(index+1),241,center+4,active?'#f1cc8e':'#a9c0be',12);
+      arrow(g,292,center,322,active?'#e6bf81':'#58767a');
+      if (age>=0 && age<650) circle(g,173+clamp(age/650)*143,center,4,'#f3cd88');
+      if (age>=650) {
+        histogram(g,interval,center,clamp((age-650)/740));
+      }
+      if (age>=1700) {
+        const {winner} = interval;
+        arrow(g,520,center,557,winner.color);
+        box(g,666,y,112,h,winner.color+'42',winner.color,0);
+        path(g,[[568,y],[778,y]],winner.color,1);
+        label(g,'Фация '+winner.id,722,center+5,winner.color,16,650);
+      }
+    });
+    label(g,'Демонстрационные интервалы и вероятности',425,483,'#acbfbd',12);
+  }
+
+  function draw(time) {
+    const recorded = clamp(time/recordDuration);
+    well(contexts[0],time,recorded);
+    tablet(contexts[1],time,recorded);
+  }
+
+  let time=0;
+  let previous;
+  let request;
+  function frame(now) {
+    if (previous!==undefined) time=(time+Math.min(now-previous,50))%cycle;
+    previous=now;
+    draw(time);
+    request=requestAnimationFrame(frame);
+  }
+
+  function update() {
+    cancelAnimationFrame(request);
+    previous=undefined;
+    draw(motion.matches ? 15100 : time);
+    if (!motion.matches && !document.hidden) request=requestAnimationFrame(frame);
+  }
+
+  const observer=new ResizeObserver(() => {
+    canvases.forEach((canvas,index) => {
+      const [w,h]=dimensions[index];
+      const rect=canvas.getBoundingClientRect();
+      const ratio=Math.min(devicePixelRatio||1,2);
+      canvas.width=Math.round(rect.width*ratio);
+      canvas.height=Math.round(rect.height*ratio);
+      contexts[index].setTransform(canvas.width/w,0,0,canvas.height/h,0,0);
+    });
+    update();
+  });
+  canvases.forEach(canvas => observer.observe(canvas));
+  motion.addEventListener('change',update);
+  document.addEventListener('visibilitychange',update);
+</script>
+</html>

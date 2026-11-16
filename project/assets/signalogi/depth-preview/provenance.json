@@ -1,0 +1,33 @@
+{
+  "source_deck": "Сигналоги_FINAL.pptx (слайд 64; исходный документ хранится локально)",
+  "source_slide": 64,
+  "source_caption": "Сравнение кластеризации срезов по глубине со срезами модели",
+  "sequence": "Порядок колонок исходного слайда слева направо. Абсолютные глубины и монотонный порядок глубин не указаны.",
+  "frames": [
+    {
+      "label": "Срез 1 из 3",
+      "file": "slice-1.png",
+      "source_media": "ppt/media/image168.png",
+      "paired_geological_model_media": "ppt/media/image170.png",
+      "sha256": "5d17e861cd3f1cb1e7296e29d4b1ee568ea4a457583fdd89bf1f9e8a946b8238",
+      "numeric_depth": null
+    },
+    {
+      "label": "Срез 2 из 3",
+      "file": "slice-2.png",
+      "source_media": "ppt/media/image167.png",
+      "paired_geological_model_media": "ppt/media/image172.png",
+      "sha256": "751c3c3321e8f632edb2b6d588eecbb003f588006bdadc9eea9977e31710a3d5",
+      "numeric_depth": null
+    },
+    {
+      "label": "Срез 3 из 3",
+      "file": "slice-3.png",
+      "source_media": "ppt/media/image169.png",
+      "paired_geological_model_media": "ppt/media/image171.png",
+      "sha256": "44837e31d82de3c218b59250c97ff0c67545a1c7b548f987a830e517a06e8e82",
+      "numeric_depth": null
+    }
+  ],
+  "status": "Оригинальная анимация не найдена; три сохранённых результата кластеризации горизонтальных срезов извлечены из слайда без изменения пикселей."
+}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>QA/QC — цикл данных</title>
+  <link rel="stylesheet" href="qaqc-checkpoint.css">
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;min-width:320px;height:100%;overflow:hidden;background:#101e27;color:#e9e3d5;font-family:'Segoe UI',Arial,sans-serif}
+    body{background:radial-gradient(ellipse at 52% 45%,#233741 0%,#152630 43%,#0b1721 100%)}
+    .study{position:relative;width:100%;height:100dvh;min-height:480px;isolation:isolate}
+    .study:before{content:'';position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 60%,transparent 45%,#050e1440 100%);z-index:-1}
+    .stage{position:absolute;inset:0;width:auto;height:auto}
+  </style>
+</head>
+<body>
+  <main class="study">
+    <div id="qaqc-preview" class="stage"></div>
+  </main>
+  <script src="qaqc-data-glyphs.js"></script>
+  <script src="qaqc-checkpoint.js"></script>
+  <script>
+    (()=>{
+      QaqcCheckpoint.mount(document.querySelector('#qaqc-preview'),{selected:true});
+    })();
+  </script>
+</body>
+</html>

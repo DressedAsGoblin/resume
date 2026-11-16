@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Прогноз дебита после ГРП</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background: radial-gradient(ellipse at 30% 0%, #29434a, #152a34 55%, #101e28);
+      color: #f0e7d5;
+      font: 15px/1.4 'Segoe UI', sans-serif;
+    }
+    main { max-width: 1400px; margin: auto; padding: clamp(15px, 3.1vw, 42px); }
+    h1 { margin: 0 0 19px; font: 400 clamp(29px, 4vw, 49px)/1.09 Georgia, serif; }
+    h2 { margin: 0; font: 400 clamp(21px, 2.2vw, 29px)/1.15 Georgia, serif; }
+    .scene {
+      display: grid;
+      grid-template-columns: 1.13fr 1fr;
+      overflow: hidden;
+      border: 1px solid #577078;
+      border-radius: 14px;
+      background: #192e37;
+      box-shadow: 0 22px 58px #07161d63;
+    }
+    .operation {
+      position: relative;
+      min-width: 0;
+      display: grid;
+      align-items: start;
+      background: linear-gradient(164deg, #233b43, #172a34 65%, #11232c);
+    }
+    .operation h2 { position: absolute; z-index: 1; top: 26px; left: clamp(16px, 2.3vw, 32px); }
+    canvas { display: block; width: 100%; aspect-ratio: 660 / 532; }
+    .forecast {
+      --trace-gap: 11px;
+      --input-gap: 19px;
+      min-width: 0;
+      padding: 26px clamp(17px, 2.4vw, 34px) 22px;
+      border-left: 1px solid #4c626a;
+      background: linear-gradient(145deg, #1b3039, #152932);
+    }
+    .inputs { margin: 20px 0 var(--input-gap); }
+    .inputs-title { margin: 0 0 7px; color: #b8c9c8; font-size: 13px; }
+    .inputs ul { display: flex; flex-wrap: wrap; gap: 5px 17px; margin: 0; padding: 0; list-style: none; }
+    .inputs li { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; }
+    .input-light {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #99d9bc;
+      opacity: var(--active, .34);
+      box-shadow: 0 0 9px #79e7b9;
+    }
+    .data-rail {
+      height: 2px;
+      margin: 9px 0 0 calc(-1 * var(--trace-gap));
+      border-radius: 2px;
+      background: #4b6467;
+    }
+    .data-rail::before {
+      content: '';
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: #85d5b5;
+      box-shadow: 0 0 9px #78e6b0;
+      transform: scaleX(var(--feed, 0));
+      transform-origin: left;
+    }
+    .chart {
+      --labels: clamp(111px, 33%, 175px);
+      --gap: 12px;
+      --model-row: 61px;
+      --axis-height: 27px;
+      position: relative;
+    }
+    .model-feed {
+      position: absolute;
+      top: calc(-1 * var(--input-gap) - 2px);
+      bottom: calc(var(--axis-height) + var(--model-row) / 2);
+      left: calc(-1 * var(--trace-gap));
+      width: 2px;
+      background: #4b6467;
+    }
+    .model-feed::before {
+      content: '';
+      display: block;
+      height: 100%;
+      background: #85d5b5;
+      box-shadow: 0 0 9px #78e6b0;
+      transform: scaleY(var(--model-feed, 0));
+      transform-origin: top;
+    }
+    .model-feed::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      width: var(--trace-gap);
+      height: 2px;
+      background: #4b6467;
+      background: color-mix(in srgb, #85d5b5 var(--model-inlet, 0%), #4b6467);
+    }
+    .plot-guides {
+      position: absolute;
+      inset: 0 0 var(--axis-height) calc(var(--labels) + var(--gap));
+      pointer-events: none;
+      isolation: isolate;
+    }
+    .guide {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: var(--position);
+      border-left: 1px solid #39525b;
+    }
+    .guide.baseline { z-index: 2; border-left: 1px dashed #b6c6c7a6; }
+    .result {
+      position: relative;
+      display: grid;
+      grid-template-columns: var(--labels) minmax(0, 1fr);
+      align-items: center;
+      gap: var(--gap);
+      min-height: 38px;
+    }
+    .method-name { min-width: 0; line-height: 1.18; font-size: 14px; }
+    .before .method-name { color: #cfdbd8; }
+    .method-guide {
+      position: relative;
+      margin: 4px 0;
+      padding: 5px 0;
+      background: #192e37;
+    }
+    .method-guide h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .method-guide p { margin: 3px 0 0; color: #bdcecc; font-size: 13px; }
+    .analytical-guide h3 { color: #eac18a; }
+    .learned-guide h3 { color: #a5e3c9; }
+    .track { position: relative; height: 20px; }
+    .track::before {
+      content: '';
+      position: absolute;
+      inset: 8px 0;
+      background: #2b434d;
+      border-radius: 2px;
+    }
+    .bar {
+      position: absolute;
+      inset: 2px auto 2px 0;
+      width: var(--target);
+      border-radius: 0 3px 3px 0;
+      background: linear-gradient(90deg, var(--dim), var(--bright));
+      transform: scaleX(var(--grow, 0));
+      transform-origin: left;
+    }
+    .amount {
+      position: absolute;
+      z-index: 3;
+      top: 50%;
+      left: calc(var(--shown, 0%) + 7px);
+      transform: translateY(-50%);
+      color: var(--bright);
+      opacity: var(--readable, 0);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .ml-result { min-height: var(--model-row); }
+    .ml-model {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 9px;
+      border: 1px solid #55706c;
+      border-radius: 6px;
+      background: linear-gradient(155deg, #202d2f, #101a1e 65%);
+      box-shadow: inset 0 2px #ffffff09, 0 3px 0 #0c1c23;
+    }
+    .ml-model strong, .ml-model small { display: block; }
+    .ml-model strong { color: #e5eee6; font-size: 13px; font-weight: 600; }
+    .ml-model small { margin-top: 3px; color: #b2cbc2; font-size: 11px; }
+    .model-lights { display: grid; flex: 0 0 5px; gap: 4px; }
+    .model-lights i {
+      height: 5px;
+      border-radius: 50%;
+      background: #99eac8;
+      opacity: var(--model-power, .28);
+      box-shadow: 0 0 9px #7ce6b5;
+    }
+    .axis {
+      position: relative;
+      height: var(--axis-height);
+      margin-left: calc(var(--labels) + var(--gap));
+      border-top: 1px solid #587077;
+      color: #b8c9c8;
+      font-size: 12px;
+    }
+    .tick { position: absolute; top: 5px; left: var(--position); transform: translateX(-50%); }
+    .unit { margin: -3px 0 0; color: #b8c9c8; font-size: 12px; text-align: right; }
+    .demo-note { margin: 9px 0 0; color: #bdcecc; font-size: 13px; }
+    .footer { display: flex; justify-content: flex-end; margin-top: 10px; }
+    button {
+      flex-shrink: 0;
+      border: 1px solid #607b80;
+      border-radius: 7px;
+      background: #243b45;
+      padding: 7px 12px;
+      color: #e4eeea;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: #304b52; }
+    button:focus-visible { outline: 2px solid #a0e7ca; outline-offset: 3px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    @media (max-width: 840px) {
+      .scene { grid-template-columns: minmax(0, 1fr); }
+      .forecast { border-left: 0; border-top: 1px solid #4c626a; }
+      .operation h2 { top: 17px; }
+    }
+    @media (max-width: 430px) {
+      .operation { padding-top: 19px; }
+      .forecast { --input-gap: 12px; padding: 19px 15px 13px; }
+      .inputs { margin-top: 14px; }
+      .chart { --gap: 9px; }
+      .method-name { font-size: 13px; }
+    }
+    @media (prefers-reduced-motion: reduce) { #replay { display: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Прогноз дебита после ГРП</h1>
+    <div class="scene">
+      <section class="operation" aria-labelledby="operation-title">
+        <h2 id="operation-title">Многостадийный ГРП</h2>
+        <canvas id="well" role="img" aria-label="Насосные агрегаты флота ГРП подают жидкость через манифольд и устье в горизонтальный ствол. В пласте последовательно раскрываются четыре трещины."></canvas>
+      </section>
+      <section class="forecast" aria-labelledby="forecast-title">
+        <h2 id="forecast-title">Стартовый дебит нефти</h2>
+        <div class="inputs">
+          <p class="inputs-title">Исходные данные для прогноза</p>
+          <ul>
+            <li><span class="input-light" aria-hidden="true"></span>Свойства пласта</li>
+            <li><span class="input-light" aria-hidden="true"></span>Геометрия скважины</li>
+            <li><span class="input-light" aria-hidden="true"></span>Параметры ГРП</li>
+          </ul>
+          <div class="data-rail" aria-hidden="true"></div>
+        </div>
+        <div id="chart" class="chart" aria-label="Сравнение дебитов для одной скважины"></div>
+        <p class="unit" aria-hidden="true">м³/сут</p>
+        <p class="demo-note">Демонстрационные значения.</p>
+      </section>
+    </div>
+  </main>
+  <script>
+    'use strict';
+
+    const width = 660;
+    const height = 532;
+    const canvas = document.querySelector('#well');
+    const context = canvas.getContext('2d');
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const clamp = value => Math.max(0, Math.min(1, value));
+    const phase = (time, start, duration) => clamp((time - start) / duration);
+    const ease = value => value * value * (3 - 2 * value);
+
+    function shape(ctx, path, fill, stroke, lineWidth = 1) {
+      const outline = new Path2D(path);
+      if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill(outline);
+      }
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke(outline);
+      }
+    }
+
+    function circle(ctx, x, y, radius, fill, stroke, lineWidth = 1) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+      }
+    }
+
+    function verticalGradient(ctx, y1, y2, first, last) {
+      const gradient = ctx.createLinearGradient(0, y1, 0, y2);
+      gradient.addColorStop(0, first);
+      gradient.addColorStop(1, last);
+      return gradient;
+    }
+
+    function drawTerrain(ctx) {
+      const sky = ctx.createRadialGradient(355, 183, 20, 355, 183, 310);
+      sky.addColorStop(0, '#69766c32');
+      sky.addColorStop(1, '#62776a00');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 60, width, 195);
+      shape(ctx, 'M0 218 54 187 116 199 169 174 227 187 270 175 317 184 380 158 445 176 482 156 552 183 596 170 660 202 V240 H0Z', '#314a4e');
+      shape(ctx, 'M0 232 57 219 103 212 167 227 222 208 280 218 342 203 402 210 460 195 518 209 584 188 660 220 V246 H0Z', '#3b5251');
+
+      const surface = 'M23 245 94 198 642 198 616 245Z';
+      shape(ctx, surface, verticalGradient(ctx, 197, 246, '#546158', '#3a4e47'), '#627667');
+      shape(ctx, 'M41 237 101 204 H301 L283 237Z', '#687063', '#7c8070');
+      shape(ctx, 'M279 238 305 204 H344 L322 238Z', '#4d6055');
+      shape(ctx, 'M312 225 328 210 H614 L597 224Z', '#6b746649', '#838a704f');
+      shape(ctx, 'M23 245 H616 L642 198 V468 L616 503 H23Z', '#222b2c', '#7d8570', 1.4);
+
+      const face = 'M23 245 H616 V503 H23Z';
+      ctx.save();
+      ctx.clip(new Path2D(face));
+      shape(ctx, face, verticalGradient(ctx, 245, 345, '#566258', '#364a49'));
+      shape(ctx, 'M22 292 C106 282 155 309 248 303 S426 280 502 287 S581 297 617 292 V503 H22Z', '#415657', '#70816d');
+      shape(ctx, 'M22 353 C93 356 176 330 263 342 S410 350 476 341 S565 332 617 343 V503 H22Z', verticalGradient(ctx, 337, 467, '#797356', '#575744'), '#aa9e70');
+      shape(ctx, 'M22 461 C110 462 181 451 272 459 S406 477 502 461 S569 451 617 459 V504 H22Z', '#394846', '#8b8665');
+
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 25; i += 1) {
+        const y = 255 + i * 10;
+        ctx.strokeStyle = i % 3 === 0 ? '#b3aa7b28' : '#0a222e28';
+        ctx.beginPath();
+        ctx.moveTo(16, y);
+        ctx.bezierCurveTo(165, y - 12, 176, y + 17, 346, y + 2);
+        ctx.bezierCurveTo(478, y - 10, 541, y - 15, 630, y - 3);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 840; i += 1) {
+        const x = 24 + ((i * 719 + i * i * 7) % 593);
+        const y = 246 + ((i * 503 + i * i * 13) % 257);
+        ctx.fillStyle = i % 3 === 0 ? '#e9d69a2e' : '#17292c58';
+        ctx.fillRect(x, y, i % 5 + 1, 1);
+      }
+      ctx.restore();
+
+      shape(ctx, 'M616 246 642 198 V468 L616 503Z', '#142c30aa', '#65766d');
+      shape(ctx, 'M616 292 642 248 M616 343 642 301 M616 459 642 423', null, '#899274a0');
+      shape(ctx, 'M23 245 H616 L642 198', null, '#8a977f', 1.5);
+      shape(ctx, 'M23 503 H616', null, '#0a1c24', 3);
+    }
+
+    function drawPumpTruck(ctx, x, y, scale) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(scale, Math.abs(scale));
+      ctx.lineJoin = 'round';
+      shape(ctx, 'M42 233 56 216 216 214 233 225 213 236 H54Z', '#14252376');
+      for (const wheelX of [69, 174, 203]) {
+        circle(ctx, wheelX, 223, 13, '#141e22', '#596362', 2);
+        circle(ctx, wheelX, 223, 7, '#6e776f', '#303d3f', 2);
+        circle(ctx, wheelX, 223, 2, '#b8b6a2');
+      }
+      const frame = verticalGradient(ctx, 200, 224, '#64706a', '#303d3e');
+      const cab = verticalGradient(ctx, 171, 220, '#b18d54', '#6c6044');
+      shape(ctx, 'M45 208 H223 L220 218 H211 C211 205 194 204 193 219 H186 C184 204 164 204 162 219 H81 C79 205 60 204 57 219 H45Z', frame, '#151f22', 2);
+      shape(ctx, 'M47 207 V191 L55 188 62 171 H88 L97 179 V210 H80 Q68 197 57 208Z', cab, '#202a2c', 2);
+      shape(ctx, 'M53 190 60 187 66 175 H85 L91 181 V189Z', '#253e45', '#c1a471');
+      shape(ctx, 'M60 187 68 176 H76 L67 189Z', '#7b9894');
+      shape(ctx, 'M92 193 H86 M84 192 V204 M50 201 H54', null, '#cfb984', 1.5);
+      shape(ctx, 'M44 207 H52 V211 H44Z', '#ead6a4');
+      shape(ctx, 'M94 201 H217 V208 H94Z', '#808b7b', '#25373a');
+      shape(ctx, 'M102 200 V166 L108 159 H154 L164 166 V200Z', verticalGradient(ctx, 159, 201, '#7d897b', '#414e4b'), '#283638', 1.5);
+      shape(ctx, 'M108 166 H152 M112 174 H151 M112 180 H151 M112 186 H151 M112 192 H151', null, '#324142', 2);
+      shape(ctx, 'M167 198 V182 H180 L184 175 H198 L205 181 V198Z', '#686d5b', '#293638', 1.5);
+      shape(ctx, 'M172 188 H194 M172 193 H199 M200 184 H211 V194', null, '#b6aa80', 2);
+      shape(ctx, 'M98 209 H156', null, '#c1ab6b', 2);
+      ctx.restore();
+    }
+
+    function drawFleet(ctx) {
+      drawPumpTruck(ctx, 0, 0, 1);
+      drawPumpTruck(ctx, 523, 19, -.9);
+      shape(ctx, 'M226 242 238 230 H280 L290 242Z', '#657269', '#88917b');
+      shape(ctx, 'M246 235 H270 V241 H246Z M250 204 H266 V234 H250Z', '#697870', '#9ca892', 1.5);
+      shape(ctx, 'M247 206 H269 M247 219 H269 M247 230 H269', null, '#a6af98', 2.5);
+      shape(ctx, 'M237 222 H243 V228 M276 226 V233 H282', null, '#a3ab94', 2);
+      circle(ctx, 258, 202, 4, '#8e7956', '#bca371');
+    }
+
+    const background = document.createElement('canvas');
+    background.width = 2 * width;
+    background.height = 2 * height;
+    const backgroundContext = background.getContext('2d');
+    backgroundContext.scale(2, 2);
+    drawTerrain(backgroundContext);
+    drawFleet(backgroundContext);
+
+    function curve(start, controlA, controlB, end) {
+      return Array.from({length: 33}, (_, index) => {
+        const t = index / 32;
+        const s = 1 - t;
+        return start.map((point, axis) => s ** 3 * point + 3 * s * s * t * controlA[axis]
+          + 3 * s * t * t * controlB[axis] + t ** 3 * end[axis]);
+      });
+    }
+
+    const surfaceTube = [[208, 193], [217, 193], [217, 222], [239, 222], [239, 212], [258, 212]];
+    const secondLine = [[337, 194], [324, 194], [324, 225], [276, 225], [276, 212], [258, 212]];
+    const downholeTube = [[258, 212], ...curve([258, 349], [258, 390], [283, 410], [321, 410]), [587, 410]];
+    const route = [...surfaceTube, ...downholeTube.slice(1)];
+    const distance = [0];
+    for (let i = 1; i < route.length; i += 1) {
+      distance.push(distance[i - 1] + Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]));
+    }
+    const routeLength = distance.at(-1);
+
+    function trace(ctx, points, color, lineWidth) {
+      ctx.beginPath();
+      ctx.moveTo(...points[0]);
+      for (const point of points.slice(1)) ctx.lineTo(...point);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+
+    function positionAt(offset) {
+      const index = Math.max(1, distance.findIndex(value => value >= offset));
+      const fraction = (offset - distance[index - 1]) / (distance[index] - distance[index - 1]);
+      return route[index - 1].map((value, axis) => value + fraction * (route[index][axis] - value));
+    }
+
+    const fractures = [
+      {x: 550, rise: 66, drop: 57, lean: 14, start: 2.28},
+      {x: 483, rise: 61, drop: 68, lean: 18, start: 3.02},
+      {x: 414, rise: 67, drop: 51, lean: 12, start: 3.76},
+      {x: 346, rise: 58, drop: 61, lean: 19, start: 4.50},
+    ];
+
+    function drawFracture(ctx, fracture, time) {
+      const growth = ease(phase(time, fracture.start, .7));
+      if (growth === 0) return;
+      const {x, rise, drop, lean} = fracture;
+      const pulse = 1 - phase(time, fracture.start + .34, .95);
+      ctx.save();
+      ctx.translate(x, 410);
+      ctx.scale(growth, growth);
+      ctx.shadowColor = '#95eed4';
+      ctx.shadowBlur = 8 * pulse;
+      shape(ctx, `M${lean} ${-rise} Q${lean - 3} -27 6 0 Q-3 32 ${-lean} ${drop}
+        Q${-lean - 3} 26 -8 0 Q-5 -27 ${lean} ${-rise}Z`, '#69ad9c55', '#8bd4bdbf', 1.3);
+      shape(ctx, `M${lean} ${-rise} 8 -40 12 -30 1 -15 0 0 -7 16 -5 27 ${-lean} ${drop}
+        M8 -40 0 -46 -5 -56 M3 -18 -12 -28 -16 -38 M-7 16 -20 27 -22 39 M-5 27 5 35 3 48`,
+        null, pulse > .35 ? '#bcf2df' : '#9edcc9', 1.65);
+      ctx.restore();
+    }
+
+    function drawLabels(ctx) {
+      ctx.textBaseline = 'middle';
+      ctx.font = '600 18px Segoe UI, sans-serif';
+      ctx.fillStyle = '#f0e6cb';
+      ctx.fillText('Флот ГРП', 41, 109);
+      shape(ctx, 'M70 124 V136 H424 V151 M70 136 V151', null, '#bba779', 1.25);
+      ctx.fillText('Трещины ГРП', 450, 317);
+      shape(ctx, 'M514 329 V342 L496 359', null, '#94c9b5', 1.25);
+      ctx.fillText('Горизонтальный ствол', 57, 474);
+      shape(ctx, 'M268 471 H294 L321 414', null, '#bdc4ac', 1.25);
+    }
+
+    function drawWell(time) {
+      const ctx = context;
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(background, 0, 0, width, height);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      fractures.forEach(fracture => drawFracture(ctx, fracture, time));
+
+      trace(ctx, secondLine, '#1b2c2e', 7);
+      trace(ctx, secondLine, time > .75 ? '#c79c65' : '#a6a186', 3.2);
+      trace(ctx, surfaceTube, '#1b2c2e', 7);
+      trace(ctx, surfaceTube, '#a6a186', 3.8);
+      trace(ctx, downholeTube, '#253033', 11);
+      trace(ctx, downholeTube, '#b0b3a1', 6.5);
+      trace(ctx, downholeTube, '#3c4c4d', 3.2);
+
+      const front = phase(time, .55, 1.65) * routeLength;
+      if (front > 0) {
+        const through = route.filter((_, index) => distance[index] < front);
+        trace(ctx, [...through, positionAt(front)], '#e7b777', 2.6);
+      }
+      if (time >= .55 && time < 5.27) {
+        const working = fractures.findLast(fracture => time >= fracture.start);
+        const endpoint = working ? routeLength - (587 - working.x) : front;
+        for (let n = 0; n < 12; n += 1) {
+          const offset = ((time - .55) * 395 - n * 61) % routeLength;
+          if (offset < 0 || offset > endpoint) continue;
+          const [x, y] = positionAt(offset);
+          circle(ctx, x, y, 2.7, '#ffdf9f');
+        }
+      }
+      drawLabels(ctx);
+    }
+
+    const scale = 60;
+    const cases = [
+      {name: 'До ГРП', value: 24, dim: '#627b80', bright: '#d3dedb', start: 0},
+      {name: 'Экономидес и Мартин', value: 38, dim: '#716149', bright: '#e6bb7d', start: 6.38},
+      {name: 'Ли и соавторы', value: 47, dim: '#746649', bright: '#ebc58a', start: 6.92},
+      {name: 'Го и Юй', value: 33, dim: '#716149', bright: '#dfb578', start: 7.46},
+      {name: 'CatBoost', value: 41, dim: '#3f856f', bright: '#9de5c5', start: 8.83, model: true},
+    ];
+    const ticks = [0, 15, 30, 45, 60];
+    const percentage = value => `${100 * value / scale}%`;
+    const chart = document.querySelector('#chart');
+    const chartMarkup = item => `
+      <div class="result ${item.model ? 'ml-result' : ''} ${item.start === 0 ? 'before' : ''}"
+           style="--target:${percentage(item.value)};--dim:${item.dim};--bright:${item.bright}">
+        <div class="method-name">${item.model ? `
+          <div class="ml-model">
+            <span class="model-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span><strong>${item.name}</strong><small>Обученная модель</small></span>
+          </div>` : item.name}</div>
+        <div class="track" aria-hidden="true"><span class="bar"></span><span class="amount">${item.value}</span></div>
+        <span class="sr-only">${item.value} кубических метров в сутки</span>
+      </div>`;
+    chart.innerHTML = `
+      <div class="model-feed" aria-hidden="true"></div>
+      <div class="plot-guides" aria-hidden="true">
+        ${ticks.map(value => `<span class="guide" style="--position:${percentage(value)}"></span>`).join('')}
+        <span class="guide baseline" style="--position:${percentage(cases[0].value)}"></span>
+      </div>
+      ${chartMarkup(cases[0])}
+      <div class="method-guide analytical-guide">
+        <h3>Аналитические модели</h3>
+        <p>Инженер выбирает формулу и оценивает её параметры, например радиус дренирования.</p>
+      </div>
+      ${cases.slice(1, -1).map(chartMarkup).join('')}
+      <div class="method-guide learned-guide">
+        <h3>Обучение на прошлых ГРП</h3>
+        <p>CatBoost учится связывать параметры пласта, скважины и ГРП с фактическим дебитом.</p>
+      </div>
+      ${chartMarkup(cases.at(-1))}
+      <div class="axis" aria-hidden="true">
+        ${ticks.map(value => `<span class="tick" style="--position:${percentage(value)}">${value}</span>`).join('')}
+      </div>`;
+    const forecast = document.querySelector('.forecast');
+    const inputs = [...document.querySelectorAll('.input-light')];
+    const rows = [...chart.querySelectorAll('.result')];
+
+    const duration = 11.4;
+    let currentTime = 0;
+    let frame;
+
+    function render(time) {
+      currentTime = time;
+      drawWell(time);
+      const feed = phase(time, 5.39, .86);
+      forecast.style.setProperty('--feed', ease(feed));
+      forecast.style.setProperty('--model-feed', ease(phase(time, 7.76, .68)));
+      const modelPower = ease(phase(time, 8.44, .39));
+      forecast.style.setProperty('--model-inlet', `${100 * modelPower}%`);
+      forecast.style.setProperty('--model-power', .28 + .72 * modelPower);
+      inputs.forEach((input, index) => {
+        input.style.setProperty('--active', .34 + .66 * ease(phase(time, 5.39 + .2 * index, .35)));
+      });
+      rows.forEach((row, index) => {
+        const {value, start} = cases[index];
+        const progress = start === 0 ? 1 : phase(time, start, 1.05);
+        const growth = ease(progress);
+        row.style.setProperty('--grow', growth);
+        row.style.setProperty('--shown', percentage(value * growth));
+        row.style.setProperty('--readable', phase(progress, .77, .23));
+      });
+    }
+
+    function fitCanvas() {
+      const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.round(canvas.clientWidth * pixelRatio);
+      canvas.height = Math.round(canvas.clientHeight * pixelRatio);
+      context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+      drawWell(currentTime);
+    }
+
+    function replay() {
+      cancelAnimationFrame(frame);
+      if (reducedMotion.matches) {
+        render(duration);
+        return;
+      }
+      render(0);
+      const start = performance.now();
+      function advance(now) {
+        const time = Math.min(duration, ((now - start) / 1000) % (duration + 2.5));
+        render(time);
+        frame = requestAnimationFrame(advance);
+      }
+      frame = requestAnimationFrame(advance);
+    }
+
+    new ResizeObserver(fitCanvas).observe(canvas);
+    reducedMotion.addEventListener('change', replay);
+    fitCanvas();
+    replay();
+  </script>
+</body>
+</html>

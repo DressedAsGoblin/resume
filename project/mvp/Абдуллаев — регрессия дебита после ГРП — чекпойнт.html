@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Сравнение моделей прогноза дебита после ГРП</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100dvh; color:#f2e9d7; background:radial-gradient(ellipse at 20% 0%,#2a4248,#132631 65%,#0e1e26); font:15px/1.4 'Segoe UI',sans-serif; }
+  main { width:min(100%,1330px); margin:auto; padding:clamp(16px,3.2vw,42px); }
+  h1 { margin:0; font:400 clamp(28px,3.9vw,47px)/1.1 Georgia,serif; }
+  h2 { margin:0 0 10px; font:400 23px/1.15 Georgia,serif; }
+  p { margin:0; }
+  .byline { margin:9px 0 17px; color:#bccdca; }
+  .scene { display:grid; grid-template-columns:minmax(0,.87fr) minmax(0,1.25fr); border:1px solid #60797b; border-radius:13px; overflow:hidden; background:linear-gradient(145deg,#203941,#152b34 72%); }
+  section { min-width:0; padding:22px clamp(14px,2.3vw,29px); }
+  section+section { border-left:1px solid #466369; }
+  .caption { color:#bececb; font-size:13px; }
+  .tiles { display:grid; grid-template-columns:repeat(16,minmax(0,1fr)); gap:4px; margin:16px 0 12px; padding:12px; border:1px solid #4c696e; border-radius:5px; background:#172d37; }
+  .tile { aspect-ratio:1.6; border:1px solid #698a8b; border-radius:1px; background:#4b696e; transition:background .35s,border-color .35s,opacity .35s; }
+  .cleaned .tile.discard { opacity:.24; background:#536162; }
+  .partitioned .tile.train { background:#5e9c89; border-color:#79baa3; }
+  .partitioned .tile.validation { background:#b29665; border-color:#c8ad80; }
+  .dataset-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:14px; }
+  .dataset-summary div { min-width:0; padding:8px 9px; background:#253d43; border-left:2px solid #7fbdab; }
+  .dataset-summary div:last-child { border-color:#d0af77; }
+  .dataset-summary strong { display:block; font-size:20px; font-weight:600; line-height:1.13; }
+  .factors { margin-top:15px; padding-top:11px; border-top:1px solid #4b6669; }
+  .factors strong { display:block; margin-bottom:3px; font-size:14px; }
+  .results { --labels:clamp(99px,32%,155px); --gap:10px; }
+  .axis { display:grid; grid-template-columns:var(--labels) minmax(0,1fr); gap:var(--gap); align-items:end; margin-top:14px; }
+  .ticks { display:flex; justify-content:space-between; margin-right:36px; color:#becdc8; font-size:11px; }
+  .model-list { margin:4px 0 0; padding:0; list-style:none; }
+  .model { display:grid; grid-template-columns:var(--labels) minmax(0,1fr); gap:var(--gap); align-items:center; min-height:36px; }
+  .method { min-width:0; font-size:13px; line-height:1.2; }
+  .measure { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) 31px; align-items:center; gap:5px; }
+  .track { position:relative; height:12px; border-radius:0 2px 2px 0; background:#344d54; }
+  .bar { position:absolute; top:0; bottom:0; border-radius:0 2px 2px 0; }
+  .initial { left:0; width:var(--initial-width,0%); background:linear-gradient(90deg,#577980,#9cb7b8); }
+  .tuned { left:var(--initial-width,0%); width:var(--extra-width,0%); background:#dfbb82; }
+  .chosen .initial { background:linear-gradient(90deg,#4b8977,#a0ddbe); }
+  .score { font-size:12px; text-align:right; color:#cad7d3; opacity:var(--score-opacity,1); font-variant-numeric:tabular-nums; }
+  .chosen .method,.chosen .score { color:#aaebcb; font-weight:600; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:10px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .key { display:inline-block; width:12px; height:5px; border-radius:1px; background:#a3bdbb; }
+  .key.gain { background:#dfbb82; }
+  .result { margin-top:14px; padding:9px 11px; border-left:2px solid #99dcbc; background:#263f43; }
+  .result strong { color:#a8e3c6; }
+  .result p+p { margin-top:3px; }
+  .byline,.source { font-size:13px; }
+  footer { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:11px; margin-top:13px; color:#bececb; }
+  button { color:#ecf1e7; background:#263e47; border:1px solid #658486; border-radius:6px; font:inherit; padding:6px 12px; cursor:pointer; }
+  button:focus-visible { outline:2px solid #a0e7ca; outline-offset:3px; }
+  button:hover { background:#345158; }
+  @media(max-width:740px) { .scene { grid-template-columns:minmax(0,1fr); } section+section { border-left:0; border-top:1px solid #466369; } }
+  @media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; } #replay { display:none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Сравнение моделей прогноза дебита после ГРП</h1>
+  <p class="byline">Дипломная работа Рафаэля Абдуллаева · наставничество Максима Мельникова</p>
+  <div class="scene">
+    <section aria-labelledby="data-title">
+      <h2 id="data-title">Данные проведённых ГРП</h2>
+      <p class="caption">192 операции на 13 месторождениях. После подготовки осталось 185 операций и 15 признаков.</p>
+      <div class="tiles" id="tiles" role="img" aria-label="192 исходные операции. Семь исключены при подготовке, 148 пошли в обучение, 37 в валидацию."></div>
+      <div class="dataset-summary">
+        <div><strong>148</strong><span class="caption">Для обучения</span></div>
+        <div><strong>37</strong><span class="caption">Для валидации</span></div>
+      </div>
+      <div class="factors">
+        <strong>Что влияло на прогноз</strong>
+        <p class="caption">Среди важных признаков выделены число трещин, эффективная нефтенасыщенная толщина, забойное давление, проницаемость и полудлина трещины.</p>
+      </div>
+    </section>
+    <section class="results" aria-labelledby="result-title">
+      <h2 id="result-title">Прогноз дебита и фактические замеры</h2>
+      <p class="caption">На валидационной выборке сравнивали предсказанный дебит с замеренным после ГРП. Для каждой модели рассчитали коэффициент детерминации R².</p>
+      <div class="axis" aria-hidden="true"><span class="caption">Модель</span><div class="ticks"><span>0</span><span>0,25</span><span>0,50</span><span>0,75</span><span>1</span></div></div>
+      <ul class="model-list" id="model-list" aria-label="Коэффициенты детерминации моделей"></ul>
+      <p class="legend caption"><span><i class="key" aria-hidden="true"></i>До настройки</span><span><i class="key gain" aria-hidden="true"></i>Прирост после настройки</span></p>
+      <div class="result" id="result">
+        <p><strong>CatBoost показал наибольшее совпадение с замерами</strong></p>
+        <p class="caption">R² вырос с 0,818 до 0,850 после настройки гиперпараметров.</p>
+      </div>
+    </section>
+  </div>
+  <footer>
+    <p class="source">График показывает R² на выборке исследования.</p>
+    
+  </footer>
+</main>
+<script>
+  const modelData = [
+    {name:'Линейная регрессия', initial:.082},
+    {name:'Lasso', initial:.027},
+    {name:'LassoCV', initial:.007},
+    {name:'Ridge / RidgeCV', initial:.063},
+    {name:'kNN', initial:.499},
+    {name:'Random Forest', initial:.710, tuned:.767},
+    {name:'CatBoost', initial:.818, tuned:.850, chosen:true},
+  ];
+  const format = value => value.toFixed(3).replace('.', ',');
+  const tiles = document.querySelector('#tiles');
+  for (let index=0; index<192; index+=1) {
+    const tile = document.createElement('span');
+    tile.classList.add('tile', index < 148 ? 'train' : index < 185 ? 'validation' : 'discard');
+    tile.setAttribute('aria-hidden', 'true');
+    tiles.append(tile);
+  }
+  const list = document.querySelector('#model-list');
+  const models = modelData.map(model => {
+    const row = document.createElement('li');
+    row.className = model.chosen ? 'model chosen' : 'model';
+    const description = model.tuned ? `R² ${format(model.initial)}, после настройки ${format(model.tuned)}` : `R² ${format(model.initial)}`;
+    row.setAttribute('aria-label', `${model.name}. ${description}`);
+    row.innerHTML = `<span class="method">${model.name}</span><span class="measure"><span class="track" aria-hidden="true"><span class="bar initial"></span><span class="bar tuned"></span></span><span class="score" aria-hidden="true"></span></span>`;
+    list.append(row);
+    return {...model, row, score: row.querySelector('.score')};
+  });
+  const result = document.querySelector('#result');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  const phase = (time,start,length) => Math.max(0, Math.min(1, (time-start)/length));
+  let frame;
+  function render(time) {
+    tiles.classList.toggle('cleaned',time>=.85);
+    tiles.classList.toggle('partitioned',time>=1.7);
+    models.forEach((model,index) => {
+      const reveal = phase(time,2.25+.15*index,.72);
+      const tuning = model.tuned ? phase(time,4.4+.35*(index-5),.76) : 0;
+      const initial = model.initial*reveal;
+      const extra = model.tuned ? (model.tuned-model.initial)*tuning : 0;
+      model.row.style.setProperty('--initial-width', `${100*initial}%`);
+      model.row.style.setProperty('--extra-width', `${100*extra}%`);
+      model.row.style.setProperty('--score-opacity', reveal);
+      model.score.textContent = format(model.initial+extra);
+    });
+    result.style.opacity = .22+.78*phase(time,5.55,.55);
+  }
+  function replay() {
+    cancelAnimationFrame(frame);
+    if (motion.matches) { render(7); return; }
+    render(0);
+    const start = performance.now();
+    function advance(now) {
+      const time = ((now - start) / 1000) % 8.7;
+      render(time);
+      frame = requestAnimationFrame(advance);
+    }
+    frame = requestAnimationFrame(advance);
+  }
+  motion.addEventListener('change',replay);
+  replay();
+</script>
+</body>
+</html>

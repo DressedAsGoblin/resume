@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ML-классификация для ускорения history matching</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; min-height: 100dvh; color: #f2e8d5; background: radial-gradient(ellipse at 52% 30%, #233c46, #152833 56%, #0d1b26); font: 15px/1.5 'Segoe UI', sans-serif; }
+    main { width: min(100%, 1250px); margin-inline: auto; padding: clamp(20px, 4vw, 42px) clamp(16px, 4vw, 48px) 24px; }
+    h1, h2, p { margin: 0; }
+    h1 { font: 400 clamp(27px, 4vw, 45px)/1.12 Georgia, serif; text-wrap: balance; }
+    .flow { margin-top: clamp(18px, 3vw, 31px); padding: 19px clamp(7px, 2vw, 24px) 5px; border: 1px solid #47606a; border-radius: 14px; background: linear-gradient(150deg, #172b35, #12252e 58%, #172f33); }
+    .stages { display: grid; grid-template-columns: 37% 26% 37%; text-align: center; }
+    .stages > div { padding: 0 4px; }
+    .stages h2 { font: 600 clamp(13px, 2vw, 19px)/1.18 'Segoe UI', sans-serif; }
+    .stages p { margin-top: 5px; color: #b4c7c9; font-size: clamp(11px, 1.5vw, 13px); }
+    .stages div:nth-child(2) h2 { color: #f1d5a2; }
+    .stages div:nth-child(3) h2 { color: #a9e0ba; }
+    .flow-visual { position: relative; }
+    #flow { display: block; width: 100%; aspect-ratio: 1060 / 410; }
+    .reject { position: absolute; left: 60%; right: 1%; top: 85%; transform: translateY(-50%); color: #f5aaa0; font-size: clamp(12px, 1.7vw, 16px); font-weight: 600; line-height: 1.25; }
+    @media (max-width: 600px) {
+      .flow { padding-top: 12px; }
+      .stages h2 { overflow-wrap: anywhere; }
+      .stages p { line-height: 1.25; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>ML-классификация для ускорения history matching</h1>
+    </header>
+    <section class="flow" aria-label="Отбор гидродинамических моделей">
+      <div class="stages">
+        <div><h2>Гидро&shy;динамические модели</h2><p>До запуска симуляции</p></div>
+        <div><h2>Классификатор</h2></div>
+        <div><h2>Кандидаты LRAT</h2><p>Дальше — history matching</p></div>
+      </div>
+      <div class="flow-visual">
+        <canvas id="flow" role="img" aria-label="До запуска симуляции гидродинамические модели поступают в классификатор. Модели, которые по прогнозу останутся на контроле по дебиту жидкости (LRAT), подсвечиваются зелёным и направляются на history matching. Модели с контролем по забойному давлению (BHP) краснеют и падают в корзину."></canvas>
+        <p class="reject">Контроль по забойному давлению</p>
+      </div>
+    </section>
+  </main>
+  <!-- Reservoir sprites are inlined for offline use. -->
+  <script>
+(() => {
+  const spriteWidth = 84;
+  const spriteHeight = 70;
+  const resolution = 2;
+  const palettes = {
+    blue: ['#294768', '#3c6d9b', '#4d93bd', '#76b2d3', '#b0d3dc'],
+    sand: ['#4d453b', '#856348', '#b69259', '#d6b670', '#ead9a0'],
+    lilac: ['#413954', '#5b527e', '#8574ac', '#a28ac3', '#c9b5da'],
+    teal: ['#294d54', '#36747b', '#4e9c9a', '#82b8ae', '#bbd8c6'],
+    slate: ['#334552', '#5e7380', '#8da3a3', '#a3bdba', '#cfdbcf'],
+    ochre: ['#514635', '#8d6b3c', '#b89148', '#d1ad62', '#e5c887'],
+  };
+  const models = [
+    {columns: 5, rows: 4, layers: [0, 5, 11, 17], dip: [0, 0], palette: palettes.blue, field: diagonal, wells: [[.25, .35], [.73, .65]]},
+    {columns: 7, rows: 3, layers: [0, 4, 9], dip: [2, 0], palette: palettes.sand, field: channel, wells: [[.17, .66], [.51, .34], [.84, .5]]},
+    {columns: 4, rows: 5, layers: [0, 6, 13, 19, 25], dip: [-3, 1], palette: palettes.lilac, field: patch, wells: [[.68, .65]]},
+    {columns: 4, rows: 7, layers: [0, 4, 10], dip: [0, 6], palette: palettes.teal, field: diagonal, wells: [[.31, .28], [.72, .72]]},
+    {columns: 6, rows: 5, layers: [0, 6, 11, 15, 19], dip: [5, -3], palette: palettes.slate, field: patch, wells: [[.4, .26], [.75, .61], [.24, .74]]},
+    {columns: 4, rows: 3, layers: [0, 8, 17, 24], dip: [-4, 0], palette: palettes.ochre, field: diagonal, wells: [[.63, .27]]},
+    {columns: 8, rows: 3, layers: [0, 5, 12], dip: [-6, 0], palette: palettes.teal, field: channel, wells: [[.24, .61], [.48, .35], [.75, .53]]},
+    {columns: 5, rows: 5, layers: [0, 8, 13, 17, 24], dip: [2, 3], palette: palettes.sand, field: patch, wells: [[.31, .6], [.67, .42]]},
+    {columns: 7, rows: 4, layers: [0, 3, 7, 13, 17], dip: [4, -4], palette: palettes.lilac, field: channel, wells: [[.16, .54], [.84, .56]]},
+    {columns: 4, rows: 6, layers: [0, 8, 15, 23], dip: [0, -5], palette: palettes.blue, field: channel, wells: [[.38, .2], [.64, .5], [.33, .83]]},
+    {columns: 4, rows: 4, layers: [0, 6, 12], dip: [4, 3], palette: palettes.ochre, field: patch, wells: [[.53, .58]]},
+    {columns: 6, rows: 5, layers: [0, 4, 8, 14, 19], dip: [-1, 4], palette: palettes.slate, field: diagonal, wells: [[.21, .28], [.76, .72]]},
+  ];
+  const sprites = new Map();
+
+  function diagonal(x, y, phase) {
+    return .48 + .42 * Math.sin((x - y) * 5.8 + phase);
+  }
+
+  function channel(x, y, phase) {
+    const center = .5 + .19 * Math.sin(x * 5 + phase);
+    return .16 + .81 * Math.exp(-((y - center) ** 2) / .022);
+  }
+
+  function patch(x, y, phase) {
+    return .48 + .35 * Math.sin(x * 8.1 + phase) * Math.cos(y * 6.3 - phase);
+  }
+
+  function polygon(ctx, points, fill, stroke, lineWidth = 0.55) {
+    ctx.beginPath();
+    ctx.moveTo(...points[0]);
+    for (const position of points.slice(1)) ctx.lineTo(...position);
+    ctx.closePath();
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+  }
+
+  function drawWell(ctx, x, y, height, color) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, 3.3, 1.65, 0, 0, 2 * Math.PI);
+    ctx.fillStyle = '#10212b';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y - height);
+    ctx.strokeStyle = '#14232c';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.15;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - 2.2, y - height);
+    ctx.lineTo(x + 2.2, y - height);
+    ctx.stroke();
+  }
+
+  function makeSprite(variant, tint) {
+    const {columns, rows, layers, dip, palette, field, wells} = models[variant];
+    const totalDepth = layers.at(-1);
+    const cellWidth = Math.min(10, 71 / (columns + rows));
+    const cellHeight = cellWidth * .53;
+
+    function point(column, row, depth = 0) {
+      const x = column - columns / 2;
+      const y = row - rows / 2;
+      return [(x - y) * cellWidth, (x + y) * cellHeight + x * dip[0] / columns + y * dip[1] / rows + depth - totalDepth / 2];
+    }
+
+    function cellColor(column, row, layer = 0) {
+      const value = field((column + .5) / columns, (row + .5) / rows, variant * .73 + layer * .32);
+      const index = Math.round(value * (palette.length - 1));
+      return palette[index];
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = spriteWidth * resolution;
+    canvas.height = spriteHeight * resolution;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(resolution, resolution);
+    ctx.translate(spriteWidth / 2, spriteHeight / 2);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    ctx.beginPath();
+    ctx.ellipse(0, 21 + totalDepth / 3, (columns + rows) * cellWidth * .44, 4.5, 0, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(3, 12, 17, 0.35)';
+    ctx.fill();
+
+    const grid = 'rgba(13, 28, 38, 0.82)';
+    for (let layer = 0; layer < layers.length - 1; layer++) {
+      const top = layers[layer];
+      const bottom = layers[layer + 1];
+      for (let row = 0; row < rows; row++) {
+        const face = [
+          point(columns, row, top), point(columns, row + 1, top),
+          point(columns, row + 1, bottom), point(columns, row, bottom),
+        ];
+        polygon(ctx, face, cellColor(columns - 1, row, layer), grid);
+        polygon(ctx, face, 'rgba(9, 26, 41, 0.28)');
+      }
+      for (let column = 0; column < columns; column++) {
+        const face = [
+          point(column, rows, top), point(column + 1, rows, top),
+          point(column + 1, rows, bottom), point(column, rows, bottom),
+        ];
+        polygon(ctx, face, cellColor(column, rows - 1, layer + 1), grid);
+        polygon(ctx, face, 'rgba(9, 24, 35, 0.49)');
+      }
+    }
+
+    for (let column = 0; column < columns; column++) {
+      for (let row = 0; row < rows; row++) {
+        polygon(ctx, [
+          point(column, row), point(column + 1, row),
+          point(column + 1, row + 1), point(column, row + 1),
+        ], cellColor(column, row), grid);
+      }
+    }
+
+    polygon(ctx, [
+      point(0, 0), point(columns, 0), point(columns, rows), point(0, rows),
+    ], null, '#8da9a7', 0.85);
+    polygon(ctx, [
+      point(columns, 0), point(columns, rows), point(0, rows),
+      point(0, rows, totalDepth), point(columns, rows, totalDepth), point(columns, 0, totalDepth),
+    ], null, '#69858a', 0.7);
+
+    wells.forEach(([column, row], index) => {
+      const [x, y] = point(column * columns, row * rows);
+      drawWell(ctx, x, y, 10.5 - index * 1.4, index === 0 ? '#f7dfac' : '#d3ece3');
+    });
+
+    if (tint) {
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.globalAlpha = .68;
+      ctx.fillStyle = tint;
+      ctx.fillRect(-spriteWidth / 2, -spriteHeight / 2, spriteWidth, spriteHeight);
+    }
+    return canvas;
+  }
+
+  window.drawHistoryReservoir = (ctx, x, y, scale = 1, variant = 0, opacity = 1, tint = null) => {
+    const index = ((Math.trunc(variant) % models.length) + models.length) % models.length;
+    const key = tint ? `${index}:${tint}` : index;
+    if (!sprites.has(key)) sprites.set(key, makeSprite(index, tint));
+    const width = spriteWidth * scale;
+    const height = spriteHeight * scale;
+    ctx.save();
+    ctx.globalAlpha *= opacity;
+    ctx.drawImage(sprites.get(key), x - width / 2, y - height / 2, width, height);
+    ctx.restore();
+  };
+})();
+</script>
+  <script>
+    (() => {
+      'use strict';
+      const flow = document.querySelector('#flow');
+      const ctx = flow.getContext('2d');
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      const width = 1060;
+      const height = 410;
+      const filterX = 530;
+      const channels = [78, 138, 198];
+      const inletDuration = 3900;
+      const outletDuration = 3400;
+      const fallDuration = 1050;
+      const settleDuration = 850;
+      const spacing = 450;
+      const basketRimY = 326;
+      const outcomes = [true, false, true, true, false, false, true, false];
+      const feed = Array.from({length: 24}, (_, index) => ({
+        offset: index * spacing,
+        lane: channels[index % channels.length],
+        spread: [-23, 16, 29, 5, -17, -4, -12, 9][index % outcomes.length],
+        variant: (index + 5 * Math.floor(index / 12)) % 12,
+        lrat: outcomes[index % outcomes.length],
+      }));
+      const period = feed.length * spacing;
+      const previewTime = 5230;
+
+      function fit(canvas, designWidth, designHeight) {
+        const bounds = canvas.getBoundingClientRect();
+        const dpi = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.max(1, Math.round(bounds.width * dpi));
+        canvas.height = Math.max(1, Math.round(bounds.height * dpi));
+        canvas.getContext('2d').setTransform(canvas.width / designWidth, 0, 0, canvas.height / designHeight, 0, 0);
+      }
+
+      function stroke(g, color, thickness, trace) {
+        g.beginPath();
+        trace(g);
+        g.strokeStyle = color;
+        g.lineWidth = thickness;
+        g.stroke();
+      }
+
+      function rounded(g, x, y, w, h, radius, fill, edge) {
+        g.beginPath();
+        g.roundRect(x, y, w, h, radius);
+        g.fillStyle = fill;
+        g.fill();
+        if (edge) {
+          g.strokeStyle = edge;
+          g.lineWidth = 1.5;
+          g.stroke();
+        }
+      }
+
+      function drawFlowField() {
+        ctx.clearRect(0, 0, width, height);
+        const halo = ctx.createRadialGradient(filterX, 135, 18, filterX, 135, 190);
+        halo.addColorStop(0, '#ab95623d');
+        halo.addColorStop(1, '#ab956200');
+        ctx.fillStyle = halo;
+        ctx.fillRect(0, 0, width, height);
+
+        for (const y of channels) {
+          stroke(ctx, '#78999b3a', 1.2, g => {
+            g.moveTo(53, y);
+            g.bezierCurveTo(220, y - 10, 373, y + 10, 491, y);
+          });
+          stroke(ctx, '#8bcbac58', 1.6, g => {
+            g.moveTo(567, y);
+            for (let x = 567; x <= 995; x += 4) {
+              g.lineTo(x, outletY(x, y));
+            }
+            g.moveTo(987, y - 5);
+            g.lineTo(995, y);
+            g.lineTo(987, y + 5);
+          });
+        }
+      }
+
+      function outletY(x, lane) {
+        const distance = x - filterX;
+        return lane + 6 * Math.sin(distance / 21) * Math.sin(Math.PI * distance / 465);
+      }
+
+      function drawFilter(pulse) {
+        const frame = ctx.createLinearGradient(481, 25, 573, 235);
+        frame.addColorStop(0, '#9b8054');
+        frame.addColorStop(.44, '#544c3d');
+        frame.addColorStop(1, '#312d28');
+        rounded(ctx, 480, 24, 100, 213, 13, frame, '#c2aa79');
+        rounded(ctx, 490, 35, 80, 191, 8, '#192b31', '#bba272');
+        for (const x of [508, 530, 552]) {
+          stroke(ctx, '#6c604b', 5, g => {
+            for (let y = 43; y <= 216; y += 3) {
+              const coilX = x + Math.sin((y - 43) / 5) * 4;
+              if (y === 43) g.moveTo(coilX, y);
+              else g.lineTo(coilX, y);
+            }
+          });
+        }
+        for (const y of channels) {
+          const event = pulse.get(y);
+          const intensity = event?.intensity || 0;
+          const color = event?.lrat === false ? '244, 132, 121' : '163, 235, 185';
+          rounded(ctx, 487, y - 16, 86, 32, 5, '#253b42de', '#747b6a');
+          stroke(ctx, `rgba(${color}, ${.18 + .7 * intensity})`, 1.5 + 2 * intensity, g => {
+            g.moveTo(492, y + 10);
+            g.lineTo(568, y + 10);
+          });
+        }
+        ctx.fillStyle = '#d8bc88';
+        for (const x of [489, 571]) {
+          for (const y of [33, 228]) {
+            ctx.beginPath();
+            ctx.arc(x, y, 2.1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      function drawBasketBack() {
+        rounded(ctx, 506, 224, 48, 39, 6, '#423b36', '#9b795e');
+        rounded(ctx, 514, 235, 32, 31, 4, '#2e2527', '#ae7064');
+        for (const x of [507, 553]) {
+          stroke(ctx, '#c082723b', 1.5, g => {
+            g.moveTo(x, 265);
+            g.lineTo(x, 310);
+          });
+        }
+        ctx.beginPath();
+        ctx.ellipse(filterX, basketRimY, 73, 12, 0, 0, 2 * Math.PI);
+        ctx.fillStyle = '#2b2023';
+        ctx.fill();
+        ctx.strokeStyle = '#9e655b';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+      }
+
+      function drawBasketFront(impact) {
+        const y = basketRimY;
+        ctx.beginPath();
+        ctx.moveTo(457, y);
+        ctx.quadraticCurveTo(530, y + 23, 603, y);
+        ctx.lineTo(585, 377);
+        ctx.quadraticCurveTo(530, 394, 475, 377);
+        ctx.closePath();
+        ctx.fillStyle = '#47282bc2';
+        ctx.fill();
+        ctx.save();
+        ctx.clip();
+        for (let x = 467; x <= 599; x += 14) {
+          stroke(ctx, '#cc847969', 1.3, g => {
+            g.moveTo(x, y);
+            g.lineTo(filterX + (x - filterX) * .76, 388);
+          });
+        }
+        for (const row of [12, 23, 34, 45]) {
+          stroke(ctx, '#cc847966', 1.3, g => {
+            g.moveTo(457, y + row);
+            g.quadraticCurveTo(filterX, y + row + 18, 603, y + row);
+          });
+        }
+        ctx.restore();
+        stroke(ctx, '#a26c63', 2, g => {
+          g.moveTo(457, y);
+          g.lineTo(475, 377);
+          g.quadraticCurveTo(530, 394, 585, 377);
+          g.lineTo(603, y);
+        });
+        stroke(ctx, `rgba(246, 157, 141, ${.6 + .4 * impact})`, 3, g => {
+          g.moveTo(457, y);
+          g.quadraticCurveTo(530, y + 23, 603, y);
+        });
+      }
+
+      function sprite(x, y, scale, variant, opacity, outcome, angle = 0) {
+        if (outcome !== undefined) {
+          const color = outcome ? '142, 237, 166' : '239, 95, 88';
+          const light = ctx.createRadialGradient(x, y + 7, 5, x, y + 7, 53 * scale);
+          light.addColorStop(0, `rgba(${color}, ${.63 * opacity})`);
+          light.addColorStop(1, `rgba(${color}, 0)`);
+          ctx.fillStyle = light;
+          ctx.fillRect(x - 56 * scale, y - 53 * scale, 112 * scale, 117 * scale);
+        }
+        if (outcome === true) {
+          ctx.save();
+          ctx.globalAlpha = opacity;
+          stroke(ctx, '#a9f1c1bd', 1.4, g => g.ellipse(x, y + 21 * scale, 31 * scale, 6 * scale, 0, 0, Math.PI * 2));
+          ctx.restore();
+        }
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        window.drawHistoryReservoir(ctx, 0, 0, scale, variant, opacity, outcome === false ? '#e65757' : null);
+        ctx.restore();
+      }
+
+      function drawScene(time) {
+        drawFlowField();
+        const pulse = new Map();
+        const inlets = [];
+        const outlets = [];
+        const rejects = [];
+        let impact = 0;
+        feed.forEach((model, index) => {
+          const age = (time - model.offset + period) % period;
+          const {lane, spread, variant, lrat} = model;
+          if (age < inletDuration) {
+            const fraction = age / inletDuration;
+            const x = 44 + (filterX - 44) * fraction;
+            const y = lane + (spread + 10 * Math.sin(2 * Math.PI * fraction + index)) * (1 - fraction);
+            inlets.push([x, y, 1.09 - .24 * fraction, variant, Math.min(1, age / 250)]);
+            return;
+          }
+          const elapsed = age - inletDuration;
+          if (elapsed < 440) pulse.set(lane, {lrat, intensity: 1 - elapsed / 440});
+          if (lrat && elapsed < outletDuration) {
+            const fraction = elapsed / outletDuration;
+            const x = filterX + 465 * fraction;
+            const fade = Math.min(1, .62 + 4 * fraction, (outletDuration - elapsed) / 540);
+            outlets.push([x, outletY(x, lane), .85 + .19 * fraction, variant, fade, true]);
+          }
+          if (!lrat && elapsed < fallDuration + settleDuration) {
+            const progress = Math.min(1, elapsed / fallDuration);
+            const settle = Math.max(0, (elapsed - fallDuration) / settleDuration);
+            const side = index % 2 ? 1 : -1;
+            const x = filterX + side * (10 * Math.sin(Math.PI * progress) + 15 * progress);
+            const y = lane + (basketRimY + 29 - lane) * progress ** 1.45;
+            const angle = side * (progress * .26 + .14 * Math.sin(2 * Math.PI * progress));
+            rejects.push([x, y, .85 - .17 * progress, variant, 1 - settle, false, angle]);
+            if (settle > 0) impact = Math.max(impact, 1 - settle);
+          }
+        });
+        drawBasketBack();
+        for (const model of inlets) sprite(...model);
+        drawFilter(pulse);
+        for (const model of outlets) sprite(...model);
+        for (const model of rejects) sprite(...model);
+        drawBasketFront(impact);
+      }
+
+      let time = previewTime;
+      let previous = null;
+      let request = 0;
+      function frame(now) {
+        if (previous !== null) time = (time + Math.min(now - previous, 50)) % period;
+        previous = now;
+        drawScene(time);
+        request = requestAnimationFrame(frame);
+      }
+      function updateMotion() {
+        cancelAnimationFrame(request);
+        previous = null;
+        if (!reducedMotion.matches && !document.hidden) request = requestAnimationFrame(frame);
+        else drawScene(previewTime);
+      }
+      new ResizeObserver(() => {
+        fit(flow, width, height);
+        drawScene(reducedMotion.matches ? previewTime : time);
+      }).observe(document.querySelector('main'));
+      reducedMotion.addEventListener('change', updateMotion);
+      document.addEventListener('visibilitychange', updateMotion);
+      updateMotion();
+    })();
+  </script>
+</body>
+</html>

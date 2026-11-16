@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Галиев — геохимическая кластеризация</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:#f1e8d7; background:radial-gradient(ellipse at 25% 0%,#29434a,#142833 56%,#111f28); font:15px/1.45 'Segoe UI',sans-serif; }
+    main { max-width:1320px; margin:auto; padding:clamp(16px,3.4vw,43px); }
+    h1 { margin:0; font:400 clamp(27px,4vw,47px)/1.12 Georgia,serif; }
+    .byline { margin:8px 0 22px; color:#bed0ce; }
+    .scene { display:grid; grid-template-columns:minmax(0,2.6fr) minmax(245px,1fr); border:1px solid #5b7379; border-radius:12px; overflow:hidden; background:#192e37; box-shadow:0 16px 46px #07182165; }
+    .visual { min-width:0; margin:0; padding:20px 19px 13px; }
+    h2 { margin:0 0 10px; font:400 clamp(19px,2.2vw,25px)/1.15 Georgia,serif; }
+    canvas { display:block; width:100%; aspect-ratio:780 / 437; background:#142934; border-radius:6px; }
+    .method { padding:20px 19px 16px; border-left:1px solid #49636b; background:#172b34; }
+    .method ol { margin:0; padding:0; list-style:none; }
+    .method li { margin:0 0 11px; padding:3px 0 3px 10px; border-left:2px solid #50676a; }
+    .method li[data-active] { border-color:#83d5b6; background:#203e42; }
+    .method li strong { display:block; font-size:14px; }
+    .method li p, .evidence p { margin:3px 0 0; color:#bfd0cd; font-size:13px; }
+    .evidence { margin-top:15px; padding-top:11px; border-top:1px solid #52686b; }
+    .evidence h3 { margin:0 0 4px; font:600 14px/1.35 'Segoe UI',sans-serif; }
+    .metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:6px 0 7px; }
+    .metrics div { padding:5px 8px; background:#203a41; }
+    .metrics dt { font-size:12px; color:#c5d4d0; }
+    .metrics dd { margin:0; color:#a3e3c8; font:400 24px/1.12 Georgia,serif; }
+    figcaption { margin:10px 0 0; color:#c0cfcc; font-size:13px; }
+    footer { display:flex; align-items:center; justify-content:space-between; gap:13px; margin-top:10px; }
+    footer p { margin:0; color:#c0cfcc; font-size:13px; }
+    button { flex:none; padding:6px 12px; color:#ebf2ed; font:inherit; border:1px solid #688188; border-radius:6px; background:#263d47; cursor:pointer; }
+    button:hover { background:#38525b; }
+    button:focus-visible { outline:2px solid #9be8c8; outline-offset:2px; }
+    @media (max-width:850px) { .scene { grid-template-columns:1fr; } .method { border-left:0; border-top:1px solid #49636b; } }
+    @media (max-width:480px) { .visual { padding:13px 8px 11px; } .visual h2,figcaption { margin-left:5px; } }
+    @media (prefers-reduced-motion:reduce) { button { display:none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Геохимическая кластеризация нефтяных проб</h1>
+    <p class="byline">Дипломная работа Филиппа Галиева · совместное научное руководство</p>
+    <div class="scene">
+      <figure class="visual">
+        <h2>Группировка проб по составу нефти</h2>
+        <canvas role="img" aria-label="На хроматограмме выделяют площади пиков, рассчитывают их отношения и применяют PCA. K-means группирует пробы по химическому составу. На карте по расположению скважин показаны группы и расхождения с экспертной разметкой."></canvas>
+        <figcaption>Оранжевым кольцом отмечены примеры расхождений с экспертной группировкой.</figcaption>
+      </figure>
+      <section class="method" aria-labelledby="method-title">
+        <h2 id="method-title">Метод Галиева</h2>
+        <ol>
+          <li data-step="0"><strong>Хроматография</strong><p>Для каждой пробы рассчитываем отношения площадей выбранных пиков.</p></li>
+          <li data-step="1"><strong>PCA и k-means</strong><p>Сокращаем число признаков и объединяем пробы со схожим составом. В выбранном варианте кластеризации выделено восемь групп.</p></li>
+          <li data-step="2"><strong>Проверка по скважинам</strong><p>Переносим группы на карту, строим диаграмму Вороного и сопоставляем назначение проб с экспертным делением на линзы.</p></li>
+        </ol>
+        <div class="evidence">
+          <h3>Согласие с экспертной группировкой</h3>
+          <dl class="metrics"><div><dt>ARI</dt><dd>0,63</dd></div><div><dt>AMI</dt><dd>0,67</dd></div></dl>
+          <p>Расхождения дают основания проверить геохимические признаки спорных скважин.</p>
+        </div>
+      </section>
+    </div>
+    <footer><p>Пробы и карта демонстрационные.</p></footer>
+  </main>
+  <script>
+    'use strict';
+    const canvas = document.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    const media = matchMedia('(prefers-reduced-motion: reduce)');
+    const steps = [...document.querySelectorAll('[data-step]')];
+    const W = 780, H = 437;
+    const palette = ['#89cfad','#e6bd80','#9eadd9','#e28f91','#77b7ce','#b7ca82','#c8a2d8','#c69a71'];
+    const map = {x:310, y:53, w:447, h:312};
+    const mapCenters = [[.17,.19],[.41,.15],[.68,.15],[.84,.31],[.18,.56],[.44,.54],[.72,.63],[.48,.82]];
+    const pcaCenters = [[.19,.24],[.40,.16],[.65,.23],[.83,.39],[.24,.54],[.40,.70],[.65,.59],[.78,.78]];
+    const drifts = [[-.034,.008],[.03,-.038],[-.006,.04],[.048,.025],[-.042,-.031]];
+    const wells = mapCenters.flatMap(([mx,my], group) => drifts.map(([dx,dy], n) => ({
+      x: map.x + (mx + dx + .013 * Math.sin(2 * group + n)) * map.w,
+      y: map.y + (my + dy + .01 * Math.cos(3 * group + n)) * map.h,
+      pcaX: 29 + (pcaCenters[group][0] + dx) * 244,
+      pcaY: 247 + (pcaCenters[group][1] + dy) * 118,
+      group, disagrees: n === 3 && [1,4,6].includes(group),
+    })));
+
+    function clipCell(cell, site, other) {
+      const a = other.x - site.x, b = other.y - site.y;
+      const centerX = (site.x + other.x) / 2, centerY = (site.y + other.y) / 2;
+      const distance = ([x,y]) => a * (x - centerX) + b * (y - centerY);
+      const clipped = [];
+      cell.forEach((point, i) => {
+        const next = cell[(i + 1) % cell.length];
+        const start = distance(point), finish = distance(next);
+        if (start <= 0) clipped.push(point);
+        if ((start <= 0) !== (finish <= 0)) {
+          const ratio = start / (start - finish);
+          clipped.push([point[0] + (next[0] - point[0]) * ratio, point[1] + (next[1] - point[1]) * ratio]);
+        }
+      });
+      return clipped;
+    }
+
+    const {x, y, w, h} = map;
+    const edges = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
+    const cells = wells.map(well => wells.reduce((cell, other) => other === well ? cell : clipCell(cell, well, other), edges));
+    const peaks = [[.09,26,.014],[.21,51,.015],[.32,91,.023],[.47,39,.012],[.60,70,.019],[.76,37,.012],[.88,55,.02]];
+    const chromatogram = Array.from({length:180}, (_, i) => {
+      const u = i / 179;
+      const amplitude = peaks.reduce((sum,[center,height,width]) => sum + height * Math.exp(-(((u - center) / width) ** 2)), 0);
+      return [30 + 242 * u, 164 - amplitude - 2 * Math.sin(i * .6) ** 2];
+    });
+    const clamp = value => Math.max(0, Math.min(1, value));
+    let elapsed = 0, frame;
+    const end = 9.5;
+
+    function path(points, {color, fill, width = 1, close = false} = {}) {
+      if (!points.length) return;
+      ctx.beginPath();
+      points.forEach(([px,py], i) => i ? ctx.lineTo(px,py) : ctx.moveTo(px,py));
+      if (close) ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (color) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke(); }
+    }
+
+    function dot(px,py,r,fill,stroke) {
+      ctx.beginPath();
+      ctx.arc(px,py,r,0,2*Math.PI);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1.9; ctx.stroke(); }
+    }
+
+    function label(value, px, py, color = '#d2e0da', size = 17, align = 'left') {
+      ctx.font = `600 ${size}px Segoe UI, sans-serif`;
+      ctx.textAlign = align;
+      ctx.fillStyle = color;
+      ctx.fillText(value, px, py);
+    }
+
+    function axes(px,py,width,height) {
+      ctx.fillStyle = '#1c3540';
+      ctx.fillRect(px,py,width,height);
+      for (let i = 0; i <= 4; i += 1) {
+        const gx = px + width * i / 4;
+        const gy = py + height * i / 4;
+        path([[gx,py],[gx,py+height]], {color:'#78999f36'});
+        path([[px,gy],[px+width,gy]], {color:'#78999f36'});
+      }
+    }
+
+    function draw(time) {
+      elapsed = time;
+      ctx.clearRect(0,0,W,H);
+      axes(29,53,244,118);
+      axes(29,247,244,118);
+      axes(x,y,w,h);
+      label('Хроматограмма',29,39);
+      label('Главные компоненты',29,232);
+      label('Группы на карте скважин',310,39);
+
+      const count = Math.max(2, Math.floor(chromatogram.length * clamp(time / 1.28)));
+      const profile = chromatogram.slice(0,count);
+      path([[profile[0][0],164],...profile,[profile.at(-1)[0],164]], {fill:'#9bc8bf25',close:true});
+      path(profile, {color:'#a6dfce',width:1.7});
+      if (time >= 1.28) {
+        for (const [component, color] of [[2,'#ebbc7d'],[4,'#e9a36f']]) {
+          const [center, , width] = peaks[component];
+          const selected = profile.filter(([px]) => Math.abs((px-30)/242 - center) < width * 1.65);
+          path([[selected[0][0],164],...selected,[selected.at(-1)[0],164]], {fill:color+'65',close:true});
+          path(selected, {color,width:2.1});
+          label(component === 2 ? 'A₁' : 'A₂',30+242*center,70,color,14,'center');
+        }
+      }
+      label('Отношения площадей пиков',29,194,'#e7c99e',15);
+      label('ПК1',269,386,'#a9bebc',14,'right');
+      label('ПК2',33,263,'#a9bebc',14);
+
+      const pca = clamp((time - 2.1) / 1.9);
+      const mapProgress = clamp((time - 4.15) / 1.7);
+      const comparison = clamp((time - 6.2) / .7);
+      wells.forEach((well, i) => {
+        const color = palette[well.group];
+        if (i < pca * wells.length) dot(well.pcaX,well.pcaY,3.8,color);
+        if (i < mapProgress * wells.length) path(cells[i], {fill:color+'58',color:'#acccc05a',close:true});
+      });
+      wells.forEach((well, i) => {
+        const active = i < mapProgress * wells.length;
+        dot(well.x,well.y,3.5,active ? palette[well.group] : '#a8bcb9','#18323a');
+        if (well.disagrees && comparison > 0) dot(well.x,well.y,5+3*comparison,null,'#ffd092');
+      });
+
+      if (pca > 0) {
+        path([[279,302],[300,302],[293,296],[300,302],[293,308]], {color:'#92cdb8',width:1.6});
+      }
+      const caption = time < 2.1 ? 'Площади пиков → геохимические признаки'
+        : time < 4.15 ? 'PCA → k-means по сокращённому набору признаков'
+        : time < 6.2 ? 'Распределение групп по скважинам'
+        : 'Сопоставление с экспертным делением на линзы';
+      label(caption,W/2,414,'#d7e6df',19,'center');
+      steps.forEach((item, i) => item.toggleAttribute('data-active', i === (time < 2.1 ? 0 : time < 4.15 ? 1 : 2)));
+    }
+
+    function resize() {
+      const ratio = Math.min(devicePixelRatio || 1,2);
+      canvas.width = Math.round(canvas.clientWidth * ratio);
+      canvas.height = Math.round(canvas.clientHeight * ratio);
+      ctx.setTransform(canvas.width / W,0,0,canvas.height / H,0,0);
+      draw(elapsed);
+    }
+
+    function replay() {
+      cancelAnimationFrame(frame);
+      if (media.matches) return draw(end);
+      const start = performance.now();
+      draw(0);
+      function tick(now) {
+        const time = Math.min(end, ((now - start) / 1000) % (end + 2.5));
+        draw(time);
+        frame = requestAnimationFrame(tick);
+      }
+      frame = requestAnimationFrame(tick);
+    }
+
+    media.addEventListener('change',replay);
+    new ResizeObserver(resize).observe(canvas);
+    resize();
+    replay();
+  </script>
+</body>
+</html>

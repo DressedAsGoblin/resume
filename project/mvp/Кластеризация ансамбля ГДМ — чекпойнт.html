@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Кластеризация ансамбля ГДМ</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse at 52% 21%, #28424c, #142734 58%, #0d1b25); color: #f0e7d4; font: 15px 'Segoe UI', sans-serif; }
+    main { max-width: 1340px; margin: auto; padding: clamp(18px, 3.5vw, 42px); }
+    h1 { margin: 0 0 17px; font: 400 clamp(28px, 4vw, 46px)/1.13 Georgia, serif; }
+    .viewport { overflow-x: auto; border: 1px solid #55717a; border-radius: 13px; background: linear-gradient(150deg, #192e38, #132631 65%, #182f33); }
+    canvas { display: block; width: 100%; min-width: 760px; aspect-ratio: 1200 / 640; }
+    .note { color: #bac9c7; font-size: 13px; margin: 10px 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Кластеризация ансамбля ГДМ</h1>
+    <div class="viewport" tabindex="0" aria-label="Схема отбора характерных гидродинамических моделей">
+      <canvas id="ensemble" role="img" aria-label="Ансамбль формируется из вариантов модели пласта с разными свойствами. После глобальной адаптации модели ниже порога целевой функции группируются в три кластера. В каждом кластере выделяется ближайшая к центроиду существующая модель. После локальной адаптации три расчётные кривые сопоставляются с красной кривой исторической добычи и продолжаются в прогноз."></canvas>
+    </div>
+    <p class="note">Демонстрационные данные. Пространство признаков показано в двумерной проекции.</p>
+  </main>
+  <script>
+function drawEnsembleReservoir(ctx, x, y, size, variant, color = '#d7b986') {
+  const columns = 10;
+  const rows = 8;
+  const layers = [0, .055, .115, .18];
+  const palette = ['#263d4c', '#345565', '#467478', '#668f80', '#c39c63', '#ebcc8c'];
+  const wells = [
+    [[.24, .64], [.74, .36]],
+    [[.27, .30], [.71, .64]],
+    [[.33, .48], [.70, .56]],
+  ];
+  const model = Math.max(0, Math.min(wells.length - 1, Math.trunc(variant)));
+  const cellWidth = size / (columns + rows);
+  const cellHeight = cellWidth * .48;
+  const depth = layers.at(-1);
+
+  function project(column, row, level = 0) {
+    const u = column - columns / 2;
+    const v = row - rows / 2;
+    return [(u - v) * cellWidth, (u + v) * cellHeight + (level - depth / 2) * size];
+  }
+
+  function permeability(u, v, layer) {
+    const texture = .09 * Math.sin((u + layer * .13) * 19) * Math.cos(v * 24);
+    if (model === 0) {
+      const center = .5 + .24 * Math.sin(5.8 * u + layer * .28);
+      return .12 + texture + .9 * Math.exp(-((v - center) ** 2) / .012);
+    }
+    if (model === 1) {
+      const west = ((u - .25) / .18) ** 2 + ((v - .30 - layer * .027) / .17) ** 2;
+      const east = ((u - .74) / .17) ** 2 + ((v - .65 + layer * .026) / .22) ** 2;
+      const island = ((u - .38) / .13) ** 2 + ((v - .82) / .105) ** 2;
+      return .13 + texture + .93 * Math.exp(-Math.min(west, east, island));
+    }
+    const belt = ((u - .51) / .54) ** 2 + ((v - .47 - .29 * (u - .5) - layer * .018) / .28) ** 2;
+    return .12 + texture + .85 / (1 + Math.exp((belt - .86) * 5));
+  }
+
+  function cellColor(column, row, layer = 0) {
+    const value = permeability((column + .5) / columns, (row + .5) / rows, layer);
+    return palette[Math.max(0, Math.min(palette.length - 1, Math.round(value * (palette.length - 1))))];
+  }
+
+  function polygon(points, fill, stroke, lineWidth = gridWidth) {
+    ctx.beginPath();
+    ctx.moveTo(...points[0]);
+    for (const point of points.slice(1)) ctx.lineTo(...point);
+    ctx.closePath();
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+  }
+
+  function line(points, stroke, lineWidth) {
+    ctx.beginPath();
+    ctx.moveTo(...points[0]);
+    for (const point of points.slice(1)) ctx.lineTo(...point);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const gridWidth = Math.max(.32, size * .006);
+  const grid = 'rgba(12, 29, 39, .75)';
+  const outline = Math.max(.7, size * .01);
+
+  ctx.beginPath();
+  ctx.ellipse(0, size * .31, size * .42, size * .042, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(4, 12, 19, .44)';
+  ctx.fill();
+
+  for (let layer = 0; layer < layers.length - 1; layer++) {
+    const top = layers[layer];
+    const bottom = layers[layer + 1];
+    for (let column = 0; column < columns; column++) {
+      const face = [
+        project(column, rows, top), project(column + 1, rows, top),
+        project(column + 1, rows, bottom), project(column, rows, bottom),
+      ];
+      polygon(face, cellColor(column, rows - 1, layer), grid);
+      polygon(face, 'rgba(7, 24, 36, .51)');
+    }
+    for (let row = 0; row < rows; row++) {
+      const face = [
+        project(columns, row, top), project(columns, row + 1, top),
+        project(columns, row + 1, bottom), project(columns, row, bottom),
+      ];
+      polygon(face, cellColor(columns - 1, row, layer), grid);
+      polygon(face, 'rgba(8, 24, 35, .29)');
+    }
+  }
+
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      polygon([
+        project(column, row), project(column + 1, row),
+        project(column + 1, row + 1), project(column, row + 1),
+      ], cellColor(column, row), grid);
+    }
+  }
+
+  polygon([
+    project(0, 0), project(columns, 0), project(columns, rows), project(0, rows),
+  ], null, color, outline);
+  line([
+    project(0, rows), project(0, rows, depth), project(columns, rows, depth),
+    project(columns, 0, depth), project(columns, 0),
+  ], '#66838a', outline);
+  line([project(columns, rows), project(columns, rows, depth)], '#66838a', outline);
+
+  for (const [u, v] of wells[model]) {
+    const [wellX, wellY] = project(u * columns, v * rows);
+    const headY = wellY - size * .105;
+    const cap = size * .024;
+    ctx.beginPath();
+    ctx.ellipse(wellX, wellY, cap * 1.25, cap * .62, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#122733';
+    ctx.fill();
+    ctx.strokeStyle = '#bdd6d2';
+    ctx.lineWidth = gridWidth;
+    ctx.stroke();
+    line([[wellX, wellY], [wellX, headY]], '#112b36', outline * 2.4);
+    line([[wellX, wellY], [wellX, headY], [wellX + cap, headY]], '#d9e8d7', outline);
+    line([[wellX - cap, headY], [wellX, headY]], '#d9e8d7', outline);
+  }
+  ctx.restore();
+}
+  </script>
+  <script>
+    (() => {
+      'use strict';
+      const canvas = document.querySelector('#ensemble');
+      const ctx = canvas.getContext('2d');
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+      const width = 1200;
+      const height = 640;
+      const palette = ['#84d6be', '#e5bc82', '#bda9e3'];
+      const fieldNames = ['Извилистый канал', 'Разобщённые тела', 'Протяжённое тело'];
+      const flow = {
+        global: 1650, threshold: 4870, clustering: 6300,
+        selection: 9600, local: 13000, forecast: 14100, end: 19000,
+      };
+      const threshold = .39;
+      const centers = [{x:635,y:166},{x:735,y:269},{x:621,y:382}];
+      const clamp = n => Math.max(0, Math.min(1, n));
+      const phase = (time, start, duration) => clamp((time-start)/duration);
+      let seed = 2731;
+      function random() {
+        seed = (1664525 * seed + 1013904223) >>> 0;
+        return seed / 4294967296;
+      }
+      const cloud = Array.from({length: 96}, (_, id) => {
+        const iteration = id/95;
+        const cluster = id % 3;
+        const {x,y} = centers[cluster];
+        return {
+          id, iteration, cluster,
+          objective: .17 + .73 * Math.exp(-4.5*iteration) + .36 * (random()-.28),
+          feature: {x: x + 88*(random()+random()-1), y: y + 52*(random()+random()-1)},
+        };
+      });
+      const accepted = cloud.filter(model => model.objective < threshold);
+      const clusters = palette.map((color, index) => {
+        const members = accepted.filter(model => model.cluster === index);
+        const centroid = {
+          x: members.reduce((sum,m)=>sum+m.feature.x,0)/members.length,
+          y: members.reduce((sum,m)=>sum+m.feature.y,0)/members.length,
+        };
+        const distance = ({feature}) => (feature.x-centroid.x)**2 + (feature.y-centroid.y)**2;
+        const representative = members.reduce((best,m) => distance(m)<distance(best) ? m : best);
+        return {color, members, centroid, representative, outputY: 164 + index*112};
+      });
+
+      function panel(x,y,w,h,fill,edge,radius=10) {
+        ctx.beginPath();
+        ctx.roundRect(x,y,w,h,radius);
+        ctx.fillStyle=fill;
+        ctx.fill();
+        if (edge) {
+          ctx.strokeStyle=edge;
+          ctx.lineWidth=1.2;
+          ctx.stroke();
+        }
+      }
+
+      function label(value,x,y,color='#f1e6cf',size=16,weight=500,align='left') {
+        ctx.font=weight+' '+size+'px Segoe UI, sans-serif';
+        ctx.textAlign=align;
+        ctx.fillStyle=color;
+        ctx.fillText(value,x,y);
+      }
+
+      function line(points,color,width=1) {
+        ctx.beginPath();
+        points.forEach(([x,y],i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+        ctx.strokeStyle=color;
+        ctx.lineWidth=width;
+        ctx.stroke();
+      }
+
+      function dot(x,y,r,color) {
+        ctx.beginPath();
+        ctx.arc(x,y,r,0,2*Math.PI);
+        ctx.fillStyle=color;
+        ctx.fill();
+      }
+
+      function arrow(x,y,tip,color) {
+        line([[x,y],[tip,y],[tip-6,y-5]],color,1.4);
+        line([[tip,y],[tip-6,y+5]],color,1.4);
+      }
+
+      function input(time) {
+        panel(23,24,322,157,'#172f3a','#536c74');
+        label('Генерация ансамбля',42,53,'#e8d4aa',19,650);
+        label('Варьируем свойства модели пласта',42,75,'#b7ccc9',13);
+        for (let index=0;index<palette.length;index++) {
+          const progress = phase(time,index*310,420);
+          if (!progress) continue;
+          ctx.globalAlpha=progress;
+          drawEnsembleReservoir(ctx,83+index*99,117+7*(1-progress),77,index,'#a0b8ad');
+        }
+        ctx.globalAlpha=1;
+        line([[184,182],[184,197],[179,192]],'#9aaa9a',1.3);
+        line([[184,197],[189,192]],'#9aaa9a',1.3);
+      }
+
+      function adaptation(time) {
+        panel(23,202,322,286,'#172f3a','#536c74');
+        label('Глобальная адаптация',42,231,'#e8d4aa',19,650);
+        label('Расчёт целевой функции',50,260,'#bbcdca',13);
+        const left=51, top=274, right=320, bottom=429;
+        const plotY = objective => bottom-clamp(objective)*(bottom-top);
+        for (let i=1;i<4;i++) {
+          const y=top+i*(bottom-top)/4;
+          line([[left,y],[right,y]],'#73989d32');
+        }
+        line([[left,top],[left,bottom],[right,bottom]],'#8ba5a8');
+        label('Итерации',right,449,'#bacdca',12,500,'right');
+        const through = phase(time,flow.global,3550);
+        const filtered = phase(time,flow.threshold,650);
+        if (filtered) {
+          const y=plotY(threshold);
+          ctx.globalAlpha=filtered;
+          ctx.fillStyle='#8bd8be13';
+          ctx.fillRect(left,y,right-left,bottom-y);
+          ctx.setLineDash([6,5]);
+          line([[left,y],[right,y]],'#e5bb80',1.4);
+          ctx.setLineDash([]);
+          label('Порог',right-5,y-7,'#edc68d',12,600,'right');
+        }
+        ctx.globalAlpha=1;
+        for (const model of cloud) {
+          if (!through || model.iteration>through) break;
+          const pass = model.objective < threshold;
+          ctx.globalAlpha=pass ? .76+.24*filtered : .76-.56*filtered;
+          dot(left+model.iteration*(right-left),plotY(model.objective),2.65,pass && filtered>.45 ? '#9de2cb' : '#a7c0c6');
+        }
+        ctx.globalAlpha=1;
+        if (filtered>.6) label('Модели ниже порога → кластеризация',42,472,'#a1dcc7',14,600);
+      }
+
+      function clusterGate(time) {
+        const active=phase(time,flow.clustering-400,500);
+        const color=active ? '#dbbd83' : '#617a80';
+        arrow(346,346,365,color);
+        panel(368,305,128,82,active?'#3a3730':'#20343e',color,9);
+        label('Модель',432,339,'#f0d7a8',15,650,'center');
+        label('кластеризации',432,360,'#f0d7a8',15,650,'center');
+        arrow(498,346,518,color);
+        for (let index=0;index<8;index++) {
+          const progress=phase(time,flow.clustering+index*175,850);
+          if (progress>0 && progress<1) dot(346+172*progress,346,2.6,'#e7cd9f');
+        }
+      }
+
+      function featurePlot(time) {
+        panel(520,24,370,464,'#172f3a','#536c74');
+        label('Кластеры ГДМ',541,53,'#e8d4aa',19,650);
+        label('Проекция пространства признаков',541,75,'#b7ccc9',13);
+        const left=547, right=868, top=97, bottom=437;
+        for (let x=left+53;x<right;x+=53) line([[x,top],[x,bottom]],'#63878c31');
+        for (let y=top+56;y<bottom;y+=56) line([[left,y],[right,y]],'#63878c31');
+        line([[left,top],[left,bottom],[right,bottom]],'#8ba5a8');
+        for (const [index,cluster] of clusters.entries()) {
+          const colorProgress=phase(time,7800+index*270,780);
+          for (const model of cluster.members) {
+            const progress=phase(time,6900+model.id*14,410);
+            if (!progress) continue;
+            ctx.globalAlpha=progress*(.64+.29*colorProgress);
+            dot(model.feature.x,model.feature.y,3.15,colorProgress>.48 ? cluster.color : '#adbec1');
+          }
+          ctx.globalAlpha=1;
+          if (colorProgress>.5) {
+            const x=551+index*105;
+            dot(x,464,4,cluster.color);
+            label('Кластер '+(index+1),x+9,469,'#cbd9d3',12);
+          }
+        }
+      }
+
+      function selectRepresentatives(time) {
+        panel(921,24,256,464,'#172f3a','#536c74');
+        label('Характерные модели',941,53,'#e8d4aa',19,650);
+        label('По одной ГДМ из каждого кластера',941,75,'#b7ccc9',12);
+        clusters.forEach(({color,centroid,representative,outputY},index) => {
+          const start=flow.selection+index*940;
+          const p=phase(time,start,330);
+          const selected=phase(time,start+310,370);
+          const modelVisible=phase(time,start+645,330);
+          panel(939,outputY-48,219,97,'#192e36','#506870',7);
+          if (!p) return;
+          const {x,y}=centroid;
+          const point=representative.feature;
+          ctx.globalAlpha=p;
+          line([[x-5,y-5],[x+5,y+5]],'#ecdfbf',1.65);
+          line([[x+5,y-5],[x-5,y+5]],'#ecdfbf',1.65);
+          if (selected) {
+            ctx.globalAlpha=selected;
+            ctx.setLineDash([2,2]);
+            line([[x,y],[point.x,point.y]],'#f1e4c4',1.3);
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(point.x,point.y,9,0,2*Math.PI);
+            ctx.strokeStyle=color;
+            ctx.lineWidth=2.2;
+            ctx.stroke();
+            dot(point.x,point.y,4.1,'#fff2d6');
+          }
+          if (modelVisible) {
+            ctx.globalAlpha=modelVisible;
+            const channelX=873+index*10;
+            line([[point.x+10,point.y],[channelX,point.y],[channelX,outputY],[932,outputY]],color+'ad',1.25);
+            arrow(932,outputY,939,color);
+            drawEnsembleReservoir(ctx,997,outputY+2,91,index,color);
+            label('ГДМ '+(index+1),1061,outputY-8,color,16,650);
+            const [first,...rest]=fieldNames[index].split(' ');
+            label(first,1061,outputY+12,'#bfcfca',12);
+            label(rest.join(' '),1061,outputY+28,'#bfcfca',12);
+          }
+          ctx.globalAlpha=1;
+        });
+      }
+
+      function productionChart(time) {
+        const history = phase(time,flow.forecast,470);
+        const match = phase(time,flow.forecast+430,660);
+        const forecast = phase(time,flow.forecast+1090,870);
+        const left=789, split=996, right=1159, top=546, bottom=594;
+        const historyColor='#f27f79';
+        panel(574,511,603,108,'#1b303a','#536c74');
+        label('Проверка качества',591,538,'#d9e6df',15,650);
+        label('и прогноз добычи',591,558,'#d9e6df',15,650);
+        line([[591,575],[608,575]],historyColor,2.4);
+        label('Историческая добыча',615,579,'#e8c1bd',12);
+        palette.forEach((color,i)=>line([[592+12*i,597],[601+12*i,597]],color,2));
+        label('Адаптированные ГДМ',631,601,'#b6ccc7',12);
+        label('Накопленная добыча',left,535,'#c3d6ce',12,600);
+        label('Исторический период',(left+split)/2,610,'#c4d0ce',11,500,'center');
+        label('Прогноз',(split+right)/2,610,'#c4d0ce',11,500,'center');
+        line([[left,top],[left,bottom],[right,bottom]],'#78999b');
+        ctx.setLineDash([3,3]);
+        line([[split,top],[split,bottom]],'#769c9a');
+        ctx.setLineDash([]);
+        const actual = t => bottom-2 - 24*(1-Math.exp(-2.35*t)) - 5*t;
+        function series(start,end,progress,curve,color,weight) {
+          if (progress<=0) return;
+          const points=Array.from({length:25},(_,i)=>{
+            const t=i/24*progress;
+            return [start+t*(end-start),curve(t)];
+          });
+          line(points,color,weight);
+        }
+        palette.forEach((color,index)=>{
+          const simulated = t => actual(t) + t*[-3.8,4.4,1.5][index] + Math.sin(5.5*t)*1.25*t;
+          series(left,split,match,simulated,color,1.55);
+          series(split,right,forecast,t=>simulated(1)-[11,9,5][index]*(1-Math.exp(-2.3*t)),color,1.55);
+        });
+        series(left,split,history,actual,historyColor,2.25);
+      }
+
+      function followup(time) {
+        const local=phase(time,flow.local,700);
+        label('×  Центроид кластера',42,536,'#e9dbb7',14,600);
+        label('○  Ближайшая модель ансамбля',42,561,'#b8dacf',14,600);
+        panel(322,511,224,108,local?'#25413e':'#1b303a',local?'#94c8b3':'#536c74');
+        label('Локальная адаптация',434,551,local?'#cbecdb':'#bdcbc8',17,650,'center');
+        label('Уточнение по скважинам',434,575,'#b6ccc7',13,500,'center');
+        if (local) {
+          ctx.globalAlpha=local;
+          line([[1048,488],[1048,500],[434,500],[434,511]],'#99cbb7',1.5);
+          line([[429,506],[434,511],[439,506]],'#99cbb7',1.5);
+          ctx.globalAlpha=1;
+        }
+        arrow(548,562,569,time>=flow.forecast?'#99cbb7':'#617a80');
+        productionChart(time);
+      }
+
+      function draw(time) {
+        ctx.clearRect(0,0,width,height);
+        input(time);
+        adaptation(time);
+        clusterGate(time);
+        featurePlot(time);
+        selectRepresentatives(time);
+        followup(time);
+      }
+
+      let elapsed=0;
+      let last=null;
+      let request=0;
+      function frame(now) {
+        if (last!==null) elapsed=(elapsed+Math.min(now-last,60))%flow.end;
+        last=now;
+        draw(elapsed);
+        request=requestAnimationFrame(frame);
+      }
+      function updateMotion() {
+        cancelAnimationFrame(request);
+        last=null;
+        draw(reduced.matches ? flow.end-1 : elapsed);
+        if (!reduced.matches && !document.hidden) request=requestAnimationFrame(frame);
+      }
+      function fit() {
+        const {width:w,height:h}=canvas.getBoundingClientRect();
+        const dpr=Math.min(devicePixelRatio||1,2);
+        canvas.width=Math.max(1,Math.round(w*dpr));
+        canvas.height=Math.max(1,Math.round(h*dpr));
+        ctx.setTransform(canvas.width/width,0,0,canvas.height/height,0,0);
+        updateMotion();
+      }
+      new ResizeObserver(fit).observe(canvas);
+      reduced.addEventListener('change',updateMotion);
+      document.addEventListener('visibilitychange',updateMotion);
+      fit();
+    })();
+  </script>
+</body>
+</html>

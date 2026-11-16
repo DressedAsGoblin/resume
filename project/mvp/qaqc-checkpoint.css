@@ -1,0 +1,23 @@
+.qc-checkpoint{width:100%;height:100%;isolation:isolate;--qc-muted:#8b9da6;--qc-green:#7bd5b2;--qc-red:#ee7d70}
+.qc-scene{width:100%;height:100%;display:block;overflow:visible}
+.qc-db-mark{fill:#e5cea1;font:600 19px 'Segoe UI',Arial,sans-serif;letter-spacing:2.2px}
+.qc-db-label{fill:#b7b9a8;font:500 10px 'Segoe UI',Arial,sans-serif;letter-spacing:2px}
+.qc-token-name{fill:#a2b4b9;font:10px 'Segoe UI',Arial,sans-serif;letter-spacing:.2px;paint-order:stroke;stroke:#12212a;stroke-width:3px;stroke-linejoin:round}
+.qc-port-label{font:600 10px 'Segoe UI',Arial,sans-serif;letter-spacing:1.1px}
+.qc-red{fill:var(--qc-red)}.qc-green{fill:var(--qc-green)}
+.qc-flow-dashes{animation:qc-flow 5s linear infinite}
+.qc-token-check,.qc-token-wait{transition:opacity .25s}
+.qc-server-lights{transition:fill .3s}
+.qc-selection-aura{opacity:0;transition:opacity .65s;pointer-events:none}
+.qc-selected .qc-selection-aura{opacity:1}
+.qc-selected-rim{opacity:.25;transition:opacity .65s}
+.qc-selected .qc-selected-rim{opacity:.95}
+.qc-change-label{fill:#c6b998;font:600 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.4px}
+.qc-change-note{fill:#8d9da2;font:9px 'Segoe UI',Arial,sans-serif;letter-spacing:.1px}
+.qc-change-rotor{animation:qc-change-turn 8s linear infinite;transform-box:fill-box;transform-origin:center}
+.qc-checkpoint[data-playing=false] .qc-flow-dashes,.qc-suspended .qc-flow-dashes,.qc-checkpoint[data-playing=false] .qc-change-rotor,.qc-suspended .qc-change-rotor{animation-play-state:paused}
+.qc-portrait .qc-direction-arrows{display:none}
+.qc-compact .qc-token-name,.qc-compact .qc-scene-labels{display:none}
+@keyframes qc-flow{to{stroke-dashoffset:-80}}
+@keyframes qc-change-turn{to{rotate:360deg}}
+@media(prefers-reduced-motion:reduce){.qc-checkpoint *{animation:none!important;transition:none!important}}

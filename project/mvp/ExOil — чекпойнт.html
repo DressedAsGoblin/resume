@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ExOil — фациальная модель и проницаемость</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse at 48% 15%,#2b4650,#142734 62%,#0f1d27); color: #efe6d4; font: 14px 'Segoe UI', sans-serif; }
+    main { max-width: 1280px; margin: auto; padding: clamp(18px,3.6vw,40px); }
+    h1 { margin: 0 0 17px; font: 400 clamp(25px,4vw,44px)/1.14 Georgia,serif; }
+    .scene { overflow-x: auto; border: 1px solid #557078; border-radius: 13px; background: linear-gradient(145deg,#203742,#132732 70%,#183233); }
+    canvas { display: block; width: 100%; min-width: 760px; aspect-ratio: 1120 / 565; }
+    .note { margin: 10px 0 0; color: #bdceca; font-size: 13px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ExOil — фациальная модель и проницаемость</h1>
+    <div class="scene" tabindex="0" aria-label="Построение карты проницаемости">
+      <canvas id="exoil" role="img" aria-label="В демонстрации вероятность канала 53 процента задаёт квантиль. От отметки 0,53 проводят горизонталь до кривой накопленного распределения канала и опускают вертикаль к значению 28,2 миллидарси. Значение переносят в ту же ячейку карты."></canvas>
+    </div>
+    <p class="note">Демонстрационные данные. В выделенной ячейке используем P₁ как уровень квантиля распределения канала.</p>
+  </main>
+  <script>
+const exoilDemo = (() => {
+  const facies = [
+    {name: 'Канал', color: '#7be0bf', median: 27.38, sigma: .39},
+    {name: 'Лопасть', color: '#f1b96f', median: 23, sigma: .58},
+    {name: 'Конус выноса', color: '#92b8ea', median: 12, sigma: .61},
+  ];
+  const rows = 6;
+  const cols = 6;
+  const focusIndex = 2 * cols + 3;
+  const maxK = 96;
+  const normalize = values => {
+    const sum = values.reduce((total, value) => total + value, 0);
+    return values.map(value => value / sum);
+  };
+
+  // Evaluate the same spatial weights for the map preview and the cell centers.
+  function weightsAt(x,y) {
+    const channelAxis = .42 + .15 * Math.sin(2 * Math.PI * (x - .1));
+    const channel = .06 + 1.36 * Math.exp(-((y - channelAxis) ** 2) / .025);
+    const lobe = .06 + 1.09 * Math.exp(-((x - .66) ** 2) / .16 - ((y - .68) ** 2) / .15);
+    const fan = .06 + 1.16 * Math.exp(-((x - .23) ** 2) / .18 - ((y - .21) ** 2) / .2);
+    return normalize([channel, lobe, fan]);
+  }
+  const cells = Array.from({length: rows * cols}, (_, index) =>
+    weightsAt((index % cols + .5) / cols,(Math.floor(index / cols) + .5) / rows)
+  );
+
+  // A seeded generator keeps this realization identical on every animation loop.
+  let seed = 2421;
+  function random() {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed + .5) / 4294967296;
+  }
+
+  const realization = cells.map(weights => {
+    const faciesDraw = random();
+    const index = faciesDraw < weights[0] ? 0 : faciesDraw < weights[0] + weights[1] ? 1 : 2;
+    const normal = Math.sqrt(-2 * Math.log(random())) * Math.cos(2 * Math.PI * random());
+    const {median, sigma} = facies[index];
+    return {facies: index, k: median * Math.exp(sigma * normal)};
+  });
+
+  function cumulative(k, index) {
+    if (k <= 0) return 0;
+    const {median, sigma} = facies[index];
+    const z = Math.log(k / median) / (sigma * Math.SQRT2);
+    const t = 1 / (1 + .3275911 * Math.abs(z));
+    const polynomial = (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t;
+    const erf = Math.sign(z) * (1 - polynomial * Math.exp(-z*z));
+    return (1 + erf) / 2;
+  }
+
+  // The worked example reads the displayed percentage as a quantile of the channel curve.
+  const focusLevel = Math.round(cells[focusIndex][0] * 100) / 100;
+  let lower = 0, upper = maxK;
+  for (let step=0; step<40; step++) {
+    const midpoint = (lower+upper)/2;
+    if (cumulative(midpoint,0)<focusLevel) lower=midpoint;
+    else upper=midpoint;
+  }
+  realization[focusIndex] = {facies:0, k:(lower+upper)/2};
+  return {facies, rows, cols, cells, weightsAt, focusIndex, focusLevel, maxK, sample: index => realization[index], cumulative};
+})();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+      const {facies, rows, cols, cells, weightsAt, focusIndex, focusLevel, maxK, sample, cumulative} = exoilDemo;
+      const canvas = document.querySelector('#exoil');
+      const ctx = canvas.getContext('2d');
+      const motion = matchMedia('(prefers-reduced-motion: reduce)');
+      const width = 1120;
+      const height = 565;
+      const stages = {facies:1200, sample:3200, write:4900, fill:5700, complete:9800, end:14300};
+      const samples = cells.map((_, index) => sample(index));
+      const chosen = samples[focusIndex];
+      const gridSize = 222;
+      const gridY = 135;
+      const focus = '#f2ce88';
+      const muted = '#b9cfcb';
+      const ink = '#f0e5cc';
+      const plot = {left:380, right:744, top:172, bottom:335};
+      const permeabilityLabelY = plot.bottom+32;
+      const clamp = n => Math.min(1,Math.max(0,n));
+      const phase = (time,start,duration) => clamp((time-start)/duration);
+      const percent = n => Math.round(n*100)+'%';
+      const formatK = n => n.toFixed(1).replace('.',',');
+      const xFor = k => plot.left+clamp(k/maxK)*(plot.right-plot.left);
+      const yFor = value => plot.bottom-value*(plot.bottom-plot.top);
+      const levelText = focusLevel.toFixed(2).replace('.',',');
+      const mapColors = ['#538779','#ba915b','#486981'];
+      const mapResolution = 72;
+      const mapCanvas = document.createElement('canvas');
+      mapCanvas.width = mapCanvas.height = mapResolution;
+      const mapContext = mapCanvas.getContext('2d');
+      for (let y=0; y<mapResolution; y++) {
+        for (let x=0; x<mapResolution; x++) {
+          const weights = weightsAt((x+.5)/mapResolution,(y+.5)/mapResolution);
+          mapContext.fillStyle = mapColors[weights.indexOf(Math.max(...weights))];
+          mapContext.fillRect(x,y,1,1);
+        }
+      }
+
+      function panel(x,y,w,h,fill,edge,r=8) {
+        ctx.beginPath();
+        ctx.roundRect(x,y,w,h,r);
+        ctx.fillStyle=fill;
+        ctx.fill();
+        if (edge) { ctx.strokeStyle=edge; ctx.lineWidth=1; ctx.stroke(); }
+      }
+
+      function label(value,x,y,color=ink,size=15,weight=500,align='left') {
+        ctx.font=weight+' '+size+'px Segoe UI, sans-serif';
+        ctx.fillStyle=color;
+        ctx.textAlign=align;
+        ctx.fillText(value,x,y);
+      }
+
+      function line(points,color,weight=1) {
+        ctx.beginPath();
+        points.forEach(([x,y],index)=>index ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+        ctx.strokeStyle=color;
+        ctx.lineWidth=weight;
+        ctx.stroke();
+      }
+
+      function dot(x,y,r,color) {
+        ctx.beginPath();
+        ctx.arc(x,y,r,0,Math.PI*2);
+        ctx.fillStyle=color;
+        ctx.fill();
+      }
+
+      function oval(x,y,radiusX,radiusY,fill) {
+        ctx.beginPath();
+        ctx.ellipse(x,y,radiusX,radiusY,0,0,Math.PI*2);
+        if (fill) {
+          ctx.fillStyle=fill;
+          ctx.fill();
+        }
+        ctx.strokeStyle=focus;
+        ctx.lineWidth=1.6;
+        ctx.stroke();
+      }
+
+      function arrow(from,to,y,color) {
+        const tail=to-5*Math.sign(to-from);
+        line([[from,y],[to,y],[tail,y-4]],color,1.6);
+        line([[to,y],[tail,y+4]],color,1.6);
+      }
+
+      function cellBounds(index, origin) {
+        return {
+          x:origin+(index%cols)*gridSize/cols,
+          y:gridY+Math.floor(index/cols)*gridSize/rows,
+          w:gridSize/cols,
+          h:gridSize/rows,
+        };
+      }
+
+      function selection({x,y,w,h}) {
+        ctx.save();
+        ctx.shadowBlur=10;
+        ctx.shadowColor=focus;
+        ctx.strokeStyle=focus;
+        ctx.lineWidth=2.15;
+        ctx.strokeRect(x+1,y+1,w-2,h-2);
+        ctx.restore();
+      }
+
+      function probabilities() {
+        const row=Math.floor(focusIndex/cols)+1, col=focusIndex%cols+1;
+        label('Ячейка '+row+' / '+col+' · вероятности фаций',35,398,focus,14,650);
+        for (const [index, facie] of facies.entries()) {
+          const y=432+index*31;
+          const color=facie.color;
+          label(['P₁','P₂','P₃'][index],35,y+4,color,13,650);
+          label(facie.name,57,y+4,color,11.5,600);
+          const base=cells[focusIndex][index];
+          panel(145,y-7,112,10,'#28444b',null,2);
+          panel(145,y-7,112*base,10,color,null,2);
+          label(percent(base),294,y+3,ink,12,600,'right');
+        }
+      }
+
+      function faciesMap() {
+        panel(19,65,304,474,'#172d37','#56717a',11);
+        label('Фациальная карта',35,95,ink,19,650);
+        label('Цвет показывает наиболее вероятную фацию',35,117,muted,12);
+        ctx.save();
+        ctx.imageSmoothingEnabled=false;
+        ctx.drawImage(mapCanvas,60,gridY,gridSize,gridSize);
+        ctx.restore();
+        ctx.strokeStyle='#a1b8ac';
+        ctx.strokeRect(60,gridY,gridSize,gridSize);
+        for (let column=1;column<cols;column++) {
+          const x=60+column*gridSize/cols;
+          line([[x,gridY],[x,gridY+gridSize]],'#c2d1c666');
+        }
+        for (let row=1;row<rows;row++) {
+          const y=gridY+row*gridSize/rows;
+          line([[60,y],[60+gridSize,y]],'#c2d1c666');
+        }
+        const cell=cellBounds(focusIndex,60);
+        selection(cell);
+        const x=cell.x+cell.w/2;
+        line([[x,cell.y+cell.h],[x,374],[280,374],[280,419]],focus,1.4);
+        line([[276,414],[280,419],[284,414]],focus,1.4);
+        probabilities();
+      }
+
+      function distributions(time) {
+        const choosing=time>=stages.facies;
+        const drawSample=time>=stages.sample;
+        panel(343,65,434,474,'#182e37','#56717a',11);
+        label('Распределения проницаемости',361,95,ink,20,650);
+        let legendX=361;
+        for (const facie of facies) {
+          dot(legendX,120,4,facie.color);
+          label(facie.name,legendX+10,124,muted,12,600);
+          legendX+=facie.name.length*7+40;
+        }
+        label('Накопленная вероятность',plot.left,148,muted,12);
+        for (const value of [0,.25,.75,1]) {
+          const y=yFor(value);
+          if (value>0 && value<1) line([[plot.left,y],[plot.right,y]],'#789a9e35');
+          label(String(value).replace('.',','),plot.left-9,y+4,muted,11,500,'right');
+        }
+        line([[plot.left,plot.top],[plot.left,plot.bottom],[plot.right,plot.bottom]],'#8eaaa9',1.15);
+        for (let step=0;step<=4;step++) {
+          const x=plot.left+step*(plot.right-plot.left)/4;
+          line([[x,plot.bottom],[x,plot.bottom+4]],'#8eaaa9');
+          label(String(Math.round(step*maxK/4)),x,plot.bottom+18,muted,11,500,'center');
+        }
+        label('Проницаемость K, мД',plot.right,plot.bottom+40,muted,12,500,'right');
+        for (const [index, facie] of facies.entries()) {
+          const active=choosing && index===chosen.facies;
+          ctx.globalAlpha=choosing && !active ? .45 : .95;
+          const curve=Array.from({length:181},(_,n)=>{
+            const k=n*maxK/180;
+            return [xFor(k),yFor(cumulative(k,index))];
+          });
+          line(curve,facie.color,active ? 3.1 : 2.0);
+        }
+        ctx.globalAlpha=1;
+        if (choosing) {
+          const y=yFor(focusLevel);
+          const x=xFor(chosen.k);
+          const extent=phase(time,stages.facies+550,750);
+          label(levelText,plot.left-8,y+4,focus,13,650,'right');
+          dot(plot.left,y,3,focus);
+          ctx.setLineDash([5,4]);
+          line([[plot.left,y],[plot.left+(x-plot.left)*extent,y]],focus,1.55);
+          ctx.setLineDash([]);
+          if (extent===1) dot(x,y,5,facies[chosen.facies].color);
+        }
+        if (drawSample) {
+          const x=xFor(chosen.k);
+          const y=yFor(focusLevel);
+          const extent=phase(time,stages.sample,520);
+          oval(x,permeabilityLabelY,36,12,'#483e2d');
+          label(formatK(chosen.k)+' мД',x,permeabilityLabelY+4,focus,13,650,'center');
+          dot(x,y,5,facies[chosen.facies].color);
+          ctx.setLineDash([5,4]);
+          line([[x,y],[x,y+(plot.bottom-y)*extent]],focus,1.55);
+          ctx.setLineDash([]);
+        }
+        const step=time>=stages.write ? ['Переносим проницаемость в ту же ячейку', 'K = '+formatK(chosen.k)+' мД']
+          : time>=stages.sample ? ['Опускаем вертикаль до оси проницаемости', facies[chosen.facies].name+' · '+formatK(chosen.k)+' мД']
+          : time>=stages.facies ? ['Проводим горизонталь от '+levelText, 'до кривой канала']
+          : ['Для каждой фации задано своё', 'распределение проницаемости'];
+        label(step[0],560,454,ink,15,650,'center');
+        label(step[1],560,478,muted,14,500,'center');
+      }
+
+      function permeabilityColor(value) {
+        const t=Math.sqrt(clamp(value/maxK));
+        return 'rgb('+[Math.round(39+195*t),Math.round(66+119*t),Math.round(83+30*t)].join(',')+')';
+      }
+
+      function permeabilityMap(time) {
+        panel(797,65,304,474,'#172d37','#56717a',11);
+        label('Карта проницаемости',813,95,ink,20,650);
+        label('Одна реализация · значения в мД',813,117,muted,13);
+        const revealed=Math.floor(phase(time,stages.fill,stages.complete-stages.fill)*cells.length);
+        samples.forEach(({k},index)=>{
+          const {x,y,w,h}=cellBounds(index,838);
+          const visible=index===focusIndex ? time>=stages.write : index<revealed;
+          panel(x,y,w,h,visible ? permeabilityColor(k) : '#203842','#728b8b66',0);
+          if (visible) label(formatK(k),x+w/2,y+h/2+4,k/maxK>.22 ? '#172630' : '#f0e5cc',11,650,'center');
+        });
+        if (time>=stages.write) selection(cellBounds(focusIndex,838));
+        label('Проницаемость, мД',820,386,muted,13,650);
+        const scale=ctx.createLinearGradient(820,0,1078,0);
+        for (let i=0;i<=8;i++) scale.addColorStop(i/8,permeabilityColor(maxK*i/8));
+        panel(820,398,258,11,scale,'#6d8685',2);
+        label('0',820,428,muted,12);
+        label(String(maxK),1078,428,muted,12,500,'right');
+      }
+
+      function draw(time) {
+        ctx.clearRect(0,0,width,height);
+        label('Построение реализации карты проницаемости',560,39,focus,19,650,'center');
+        faciesMap();
+        distributions(time);
+        permeabilityMap(time);
+        if (time>=stages.facies) {
+          const y=yFor(focusLevel);
+          oval(280,432,21,13);
+          line([[301,432],[332,432],[332,y]],focus,1.5);
+          arrow(332,347,y,focus);
+        }
+        if (time>=stages.write) {
+          const target=cellBounds(focusIndex,838);
+          const targetY=target.y+6;
+          const x=xFor(chosen.k);
+          line([[x,permeabilityLabelY+12],[x,402],[787,402],[787,targetY]],focus,1.55);
+          arrow(787,target.x+7,targetY,focus);
+        }
+        canvas.dataset.phase = time>=stages.complete ? 'complete' : 'generation';
+      }
+
+      let time=0;
+      let previous=null;
+      let request;
+      function frame(now) {
+        if (previous!==null) time=(time+Math.min(now-previous,65))%stages.end;
+        previous=now;
+        draw(time);
+        request=requestAnimationFrame(frame);
+      }
+      function updateMotion() {
+        cancelAnimationFrame(request);
+        previous=null;
+        draw(motion.matches ? stages.end-1 : time);
+        if (!motion.matches && !document.hidden) request=requestAnimationFrame(frame);
+      }
+      function fit() {
+        const bounds=canvas.getBoundingClientRect();
+        const dpr=Math.min(devicePixelRatio||1,2);
+        canvas.width=Math.max(1,Math.round(bounds.width*dpr));
+        canvas.height=Math.max(1,Math.round(bounds.height*dpr));
+        ctx.setTransform(canvas.width/width,0,0,canvas.height/height,0,0);
+        updateMotion();
+      }
+      new ResizeObserver(fit).observe(canvas);
+      motion.addEventListener('change',updateMotion);
+      document.addEventListener('visibilitychange',updateMotion);
+      fit();
+    })();
+  </script>
+</body>
+</html>

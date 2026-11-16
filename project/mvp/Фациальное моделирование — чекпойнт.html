@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Фациальное моделирование</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse at 50% 20%, #273f47, #0e1d28 75%); color: #f2e8d5; font: 15px 'Segoe UI', sans-serif; }
+  main { max-width: 1360px; margin: auto; padding: clamp(20px, 4vw, 50px); }
+  h1 { margin: 0; font: 400 clamp(29px, 5vw, 49px) Georgia, serif; }
+  p { margin: 8px 0 23px; color: #bcd0ce; }
+  .scene { overflow-x: auto; border: 1px solid #536971; border-radius: 14px; background: linear-gradient(155deg, #20343e, #142732 65%, #183133); }
+  canvas { display: block; width: 100%; min-width: 680px; aspect-ratio: 1200 / 430; }
+</style>
+<main>
+  <h1>Фациальное моделирование</h1>
+  <p>Концепция генерации и отбора фациальных карт</p>
+  <div class="scene" tabindex="0" aria-label="Схема моделирования">
+    <canvas role="img" aria-label="Каротажи, сейсмический куб и экспертные знания поступают в модель комплексирования. На выходе получается одна вероятностная фациальная модель. Она генерирует четыре фациальных сценария в виде фациальных карт. Станция контроля оценивает сценарии по авторской метрике и показывает выбранную карту и альтернативы."></canvas>
+  </div>
+</main>
+<script>
+  'use strict';
+  const canvas = document.querySelector('canvas');
+  const ctx = canvas.getContext('2d');
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  const scores = [.68, .91, .76, .84];
+  const best = scores.indexOf(Math.max(...scores));
+  const graphNodes = [[13,42],[29,16],[35,65],[58,37],[78,15],[79,62],[96,39]];
+  const graphEdges = [[0,1],[0,2],[1,3],[2,3],[3,4],[3,5],[4,6],[5,6]];
+  const secondaryEdges = [[1,4],[2,5],[2,4],[3,6]];
+  const clamp = value => Math.max(0, Math.min(1, value));
+  const ease = value => 1 - (1 - value) ** 3;
+  const cycle = 17500;
+
+  function shape(points, color, edge) {
+    ctx.beginPath();
+    points.forEach(([x,y], index) => index ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (edge) { ctx.strokeStyle = edge; ctx.stroke(); }
+  }
+
+  function line(points, color, width = 1) {
+    ctx.beginPath();
+    points.forEach(([x,y], index) => index ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+
+  function panel(x,y,w,h,fill,edge,radius = 7) {
+    ctx.beginPath();
+    ctx.roundRect(x,y,w,h,radius);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 1.4; ctx.stroke(); }
+  }
+
+  function dot(x,y,r,color) {
+    ctx.beginPath();
+    ctx.arc(x,y,r,0,Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function label(value,x,y,color = '#f2e8d5',size = 19,weight = 600) {
+    ctx.fillStyle = color;
+    ctx.font = weight + ' ' + size + 'px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(value,x,y);
+  }
+
+  function arrow(x,y,finish,color = '#718e91') {
+    line([[x,y],[finish,y],[finish-7,y-5]],color,1.5);
+    line([[finish,y],[finish-7,y+5]],color,1.5);
+  }
+
+  function inputs(time) {
+    const names = ['Каротажи','Сейсмический куб','Экспертные знания'];
+    for (let index = 0; index < names.length; index++) {
+      const y = 111 + index * 92;
+      line([[119,y],[157,y],[195,183]],'#65838a',1.4);
+      const progress = (time + index * 280) % 1380 / 1380;
+      if (time < 2500) {
+        const x = 119 + progress * 76;
+        dot(x, y + (183-y) * clamp((x-157)/38), 3.4, '#e3bb78');
+      }
+      panel(55,y-28,53,52,'#1b2b32','#688787');
+      label(names[index],81,y+45,'#c8d8d6',15);
+    }
+    for (const [offset,color] of [[0,'#e5be7e'],[14,'#84cfbe']]) {
+      const curve = Array.from({length:37}, (_,i) => [74+offset+5*Math.sin(i*.43)+2*Math.cos(i*1.7),91+i]);
+      line(curve,color,1.6);
+    }
+    shape([[62,192],[82,181],[103,191],[83,202]],'#527e88','#85a4a6');
+    shape([[62,192],[83,202],[83,221],[62,211]],'#36535f','#85a4a6');
+    shape([[83,202],[103,191],[103,211],[83,221]],'#436a71','#85a4a6');
+    for (let y=197; y<=207; y+=5) line([[63,y],[73,y+3],[83,y+10],[102,y]],'#b0c7a8');
+    panel(69,273,24,38,'#3b3d34','#d1b982',3);
+    for (let y=281; y<306; y+=8) line([[73,y],[77,y+2],[82,y-3],[88,y-3]],'#d1b982');
+    const knowledge = ['Региональная геология','Данные добычи','Априорные знания экспертов'];
+    knowledge.forEach((name,index) => label(name,105,359 + index*19,'#d3c5a7',13,400));
+    shape([[195,143],[217,123],[338,123],[318,143]],'#36494b','#a99165');
+    shape([[318,143],[338,123],[338,208],[318,231]],'#263e44','#a99165');
+    panel(195,143,123,88,'#0e1e24','#c3a875',5);
+    label('Модель',256,179,'#edcf9d',16);
+    label('комплексирования',256,201,'#edcf9d',12);
+    arrow(339,183,356);
+  }
+
+  function graph(time) {
+    const sampling = time - 3300;
+    const current = Math.floor(sampling / 1400);
+    const rolling = current >= 0 && current < scores.length;
+    const roll = rolling ? sampling % 1400 : 1400;
+    const shake = roll < 540 ? Math.sin(roll/26) * 5 * (1-roll/540) : 0;
+    const reveal = ease(clamp((time-2070)/750));
+    if (reveal) {
+      ctx.save();
+      ctx.globalAlpha = reveal;
+      ctx.translate(366 - 18*(1-reveal) + shake,113);
+      ctx.scale(1.55,1.7);
+      panel(0,0,110,81,rolling ? '#294744' : '#172c34',rolling ? '#a4ecc4' : '#607f83',8);
+      [...graphEdges,...secondaryEdges].forEach(([a,b],edge) => {
+        line([graphNodes[a],graphNodes[b]],edge < graphEdges.length ? '#87bab3' : '#c4a674',1.15);
+      });
+      graphNodes.forEach(([nx,ny],node) => dot(nx,ny,node === 3 ? 5.8 : 4,node === 3 ? '#e4c792' : '#a2dcc8'));
+      ctx.restore();
+    }
+    arrow(543,183,620,rolling ? '#9eddbd' : '#718e91');
+    if (!rolling) return;
+    const progress = clamp(roll/540);
+    const pips = [[-7,-7],[7,-7],[0,0],[-7,7],[7,7]];
+    const faces = [[0,4],[0,2,4],[0,1,3,4],[0,1,2,3,4]];
+    for (const side of [0,1]) {
+      const face = faces[(Math.floor(sampling/1400)+side+Math.floor(roll/85)*(progress<1))%faces.length];
+      ctx.save();
+      ctx.translate(562+side*32+progress*24, 205-29*Math.sin(progress*Math.PI));
+      ctx.rotate((1-progress)*progress*(side ? -8 : 8));
+      panel(-13,-13,26,26,'#e8d8b3','#8d7656',4);
+      face.forEach(pip => dot(...pips[pip],2.1,'#423726'));
+      ctx.restore();
+    }
+  }
+
+  function mapCard(x,y,scale,variant,selected = false) {
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.scale(scale,scale);
+    if (selected) { ctx.shadowColor = '#8ce7b7'; ctx.shadowBlur = 22; }
+    panel(0,0,110,73,'#274341',selected ? '#a4ecc4' : '#91a9a0',5);
+    ctx.shadowBlur = 0;
+    const step = 5;
+    for (let row=0;row<13;row++) {
+      for (let col=0;col<20;col++) {
+        const center = 5.9 + 2.3*Math.sin(col*.23+variant*.76) + .95*Math.sin(col*.48-variant);
+        const distance = Math.abs(row-center);
+        ctx.fillStyle = distance < 1.1 ? '#ddac68' : distance < 2.35 ? '#9f8659' : '#497e76';
+        ctx.fillRect(5+col*step,4+row*step,step,step);
+      }
+    }
+    for (const [wellX,wellY] of [[25,20],[54,40],[83,27]]) {
+      dot(wellX,wellY,4,'#233c42');
+      dot(wellX,wellY,2,'#e6e6ca');
+    }
+    ctx.restore();
+  }
+
+  function stack(time) {
+    scores.forEach((_,index) => {
+      const progress = clamp((time-(3890+index*1400))/590);
+      if (!progress) return;
+      const settled = ease(progress);
+      mapCard(625+(44+index*7)*settled,143+(36-index*7)*settled,.54+.17*settled,index);
+    });
+    arrow(766,185,800);
+  }
+
+  function control(time) {
+    const start = 9070;
+    const duration = 880;
+    const active = Math.floor((time-start)/duration);
+    const complete = active >= scores.length;
+    panel(805,118,155,150,'#17282e','#a48c65',11);
+    panel(820,135,125,86,'#122025','#6a7f75',6);
+    if (active >= 0 && !complete) {
+      const progress = (time-start) % duration / duration;
+      mapCard(741+102*ease(clamp(progress*4)),151,.74,active);
+      const scan = 151+52*clamp((progress-.19)/.73);
+      if (progress > .19) {
+        ctx.fillStyle = '#c8e7a52b';
+        ctx.fillRect(834,scan-6,97,12);
+        line([[834,scan],[931,scan]],'#e1edaa',2);
+      }
+    } else {
+      label(complete ? 'Сравнение завершено' : 'Ожидает карты',882,182,'#b9c9bb',12,400);
+    }
+    label('Авторская метрика',882,250,'#e0c99d',14);
+    scores.forEach((score,index) => {
+      const y = 295 + index*23;
+      const checked = active > index;
+      const winner = complete && index === best;
+      label('Сценарий '+(index+1),853,y,winner ? '#a8ebc2' : '#b8c8c7',14,400);
+      label(checked ? score.toFixed(2).replace('.',',') : '·',926,y,winner ? '#a8ebc2' : '#e6d7bb',15);
+      if (winner) line([[814,y+5],[950,y+5]],'#81ca9f',1);
+    });
+    arrow(960,185,1011,complete ? '#8ee0b0' : '#718e91');
+    if (complete) {
+      const progress = ease(clamp((time-start-duration*scores.length)/800));
+      ctx.save();
+      ctx.globalAlpha = progress;
+      mapCard(890+126*progress,143,1.24,best,true);
+      label('Сценарий '+(best+1)+' · '+scores[best].toFixed(2).replace('.',','),1084,253,'#a8ebc2',18);
+      label('Альтернативы',1084,298,'#c8d8d6',16);
+      scores.map((_,index) => index).filter(index => index !== best).forEach((index,position) => {
+        const x = 1009 + position * 52;
+        mapCard(x,312,.43,index);
+        label('Сценарий '+(index+1),x+24,362,'#b8c8c7',10,400);
+      });
+      ctx.restore();
+    }
+  }
+
+  function draw(time) {
+    ctx.clearRect(0,0,1200,430);
+    const regions = [
+      {left: 17, right: 181, title: ['Входные данные']},
+      {left: 181, right: 350, title: []},
+      {left: 350, right: 625, title: ['Вероятностная', 'фациальная модель']},
+      {left: 625, right: 790, title: ['Реализации']},
+      {left: 790, right: 982, title: ['Контроль карт']},
+      {left: 982, right: 1183, title: ['Выбор карты']},
+    ];
+    for (const {left,right,title} of regions) {
+      panel(left+4,73,right-left-8,340,'#6da0a00c',null,7);
+      const center = (left+right)/2;
+      title.forEach((row,index) => label(row,center,title.length > 1 ? 34+index*21 : 45));
+    }
+    line([[29,65],[1170,65]],'#60838965');
+    inputs(time);
+    graph(time);
+    stack(time);
+    control(time);
+  }
+
+  let time = 0;
+  let previous;
+  let frameId;
+  function render(now) {
+    if (previous !== undefined) time = (time+Math.min(50,now-previous))%cycle;
+    previous = now;
+    draw(time);
+    frameId = requestAnimationFrame(render);
+  }
+  function update() {
+    cancelAnimationFrame(frameId);
+    previous = undefined;
+    draw(motion.matches ? 15000 : time);
+    if (!motion.matches && !document.hidden) frameId = requestAnimationFrame(render);
+  }
+  new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect();
+    const ratio = Math.min(devicePixelRatio || 1,2);
+    canvas.width = Math.round(box.width*ratio);
+    canvas.height = Math.round(box.height*ratio);
+    ctx.setTransform(canvas.width/1200,0,0,canvas.height/430,0,0);
+    update();
+  }).observe(canvas);
+  motion.addEventListener('change',update);
+  document.addEventListener('visibilitychange',update);
+</script>
+</html>

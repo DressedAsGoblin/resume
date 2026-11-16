@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Keep Geoscience Weird — международный хакатон Xeek</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; color: #f2e8d5; background: radial-gradient(ellipse at 50% 45%, #263e46, #172a34 50%, #0c1923); font: 14px 'Segoe UI', sans-serif; }
+    main { height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr); gap: 14px; padding: 10px 16px; }
+    .scene { min-width: 0; min-height: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+    figure { min-width: 0; min-height: 0; width: min(100%, 330px); margin: 0; align-self: center; justify-self: center; }
+    figure img { display: block; width: 100%; height: auto; max-height: max(120px, calc(100dvh - 115px)); object-fit: contain; }
+    figcaption { margin-bottom: 8px; text-align: center; color: #dce6de; font-weight: 600; }
+    .map-legend { margin: 8px 0 0; padding: 0; list-style: none; color: #c6d4d1; font-size: 13px; line-height: 1.35; }
+    .map-legend li + li { margin-top: 4px; }
+    .well-marker { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #ec5353; }
+    @media (max-width: 610px) {
+      main { height: auto; grid-template-columns: 1fr; }
+      .scene { height: clamp(225px, 55vw, 380px); }
+      figure img { max-height: 360px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="scene">
+      <canvas id="field" role="img" aria-label="Две скважины на лесной поверхности. В коллекторе между глинами слева показана крупная сетка, справа мелкая сетка и глинистые прослои. Зонды поднимаются от забоя и записывают SP log снизу вверх. Сходные интервалы подсвечиваются зелёным, различающиеся красным."></canvas>
+    </div>
+    <figure>
+      <figcaption>Результат — карта зон сходства с целевой скважиной</figcaption>
+      <img src="assets/xeek-map.png" alt="Карта зон сходства с цветовой шкалой метрики справа.">
+      <ul class="map-legend" aria-label="Легенда карты">
+        <li><span class="well-marker" aria-hidden="true"></span>Красная точка — целевая скважина, относительно которой ищем похожие зоны.</li>
+        <li>Чем меньше значение метрики на шкале, тем больше сходство с целевой скважиной.</li>
+      </ul>
+    </figure>
+  </main>
+  <script>
+    (() => {
+      'use strict';
+      const canvas = document.querySelector('#field');
+      const ctx = canvas.getContext('2d');
+      const width = 1100;
+      const height = 680;
+      const trackTop = 322;
+      const trackHeight = 238;
+      const trackWidth = 122;
+      const maximumDepth = 400;
+      const casingHalfWidth = 40;
+      const pulleyY = 199;
+      const recordingDuration = 13600;
+      const cycleDuration = recordingDuration + 4200;
+      const tau = 2 * Math.PI;
+      const wells = [
+        {x: 315, track: 144, name: 'Скважина 1', color: '#f2d7a7'},
+        {x: 785, track: 834, name: 'Скважина 2', color: '#b9e3e5'},
+      ];
+      const intervals = [
+        {start: .14, end: .35, forms: [motif, motif]},
+        {start: .39, end: .59, forms: [hump, doubleDip]},
+        {start: .63, end: .80, forms: [doubleDip, doubleDip]},
+        {start: .84, end: 1, forms: [doubleDip, hump]},
+      ];
+
+      function gaussian(x, center, spread) {
+        return Math.exp(-((x - center) ** 2) / (2 * spread ** 2));
+      }
+
+      function motif(x) {
+        return gaussian(x, .33, .12) - .8 * gaussian(x, .66, .10);
+      }
+
+      function hump(x) {
+        return 1.05 * gaussian(x, .5, .23);
+      }
+
+      function doubleDip(x) {
+        return -.95 * gaussian(x, .32, .12) + .65 * gaussian(x, .51, .075) - .75 * gaussian(x, .73, .12);
+      }
+
+      function reading(depth, well) {
+        const texture = .08 * Math.sin(tau * (12 * depth + .17 * well)) + .036 * Math.sin(tau * (33 * depth + .31 * well));
+        const interval = intervals.find(({start, end}) => depth >= start && depth <= end);
+        if (!interval) return texture;
+        const position = (depth - interval.start) / (interval.end - interval.start);
+        const taper = Math.min(1, 9 * position, 9 * (1 - position));
+        return texture + taper * interval.forms[well](position) * (well === 0 ? 1 : .86);
+      }
+
+      function compare(interval) {
+        const values = wells.map((_, well) => Array.from({length: 60}, (_, index) => {
+          const depth = interval.start + (interval.end - interval.start) * index / 59;
+          return reading(depth, well);
+        }));
+        const centered = values.map(series => {
+          const mean = series.reduce((sum, value) => sum + value, 0) / series.length;
+          return series.map(value => value - mean);
+        });
+        const [left, right] = centered;
+        const dot = left.reduce((sum, value, index) => sum + value * right[index], 0);
+        const energies = centered.map(series => series.reduce((sum, value) => sum + value ** 2, 0));
+        return dot / Math.sqrt(energies[0] * energies[1]) >= .85;
+      }
+
+      const comparison = intervals.map(interval => ({...interval, similar: compare(interval)}));
+
+      function pointX(well, depth) {
+        return wells[well].track + trackWidth / 2 + 44 * reading(depth, well);
+      }
+
+      const traces = wells.map((_, well) => {
+        const path = new Path2D();
+        path.moveTo(pointX(well, 0), trackTop);
+        for (let index = 1; index <= 520; index++) {
+          const depth = index / 520;
+          path.lineTo(pointX(well, depth), trackTop + trackHeight * depth);
+        }
+        return path;
+      });
+
+      function polygon(g, vertices, fill, stroke) {
+        g.beginPath();
+        vertices.forEach(([x, y], index) => index ? g.lineTo(x, y) : g.moveTo(x, y));
+        g.closePath();
+        g.fillStyle = fill;
+        g.fill();
+        if (stroke) { g.strokeStyle = stroke; g.stroke(); }
+      }
+
+      function line(g, x1, y1, x2, y2, color, thickness = 1) {
+        g.beginPath();
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        g.strokeStyle = color;
+        g.lineWidth = thickness;
+        g.stroke();
+      }
+
+      function label(g, text, x, y, color, size, align = 'center') {
+        g.font = `${size}px 'Segoe UI', sans-serif`;
+        g.fillStyle = color;
+        g.textAlign = align;
+        g.textBaseline = 'middle';
+        g.fillText(text, x, y);
+      }
+
+      function drawPine(g, x, y, size, shade) {
+        g.fillStyle = '#0b252c44';
+        g.beginPath();
+        g.ellipse(x + 3, y, size * .35, size * .13, -.12, 0, tau);
+        g.fill();
+        line(g, x, y, x, y - size * .44, '#745f45', 1.7);
+        const needles = ['#263f3e', '#284b43', '#2f5448'][shade];
+        for (let tier = 0; tier < 3; tier++) {
+          const base = y - size * (.16 + tier * .20);
+          const span = size * (.29 - tier * .055);
+          const tip = base - size * .45;
+          polygon(g, [[x - span, base], [x, tip], [x + span, base], [x, base + size * .10]], needles);
+          polygon(g, [[x, tip], [x + span, base], [x, base + size * .10]], '#b5d1a31c');
+        }
+      }
+
+      function drawCollectorTexture(g, start, end, fineGrid) {
+        const span = end[0] - start[0];
+        const slope = (end[1] - start[1]) / span;
+        g.save();
+        g.transform(1, slope, 0, 1, start[0], start[1]);
+
+        if (fineGrid) {
+          const claySeams = [
+            ['M-4 103 C78 98 131 111 204 105 S357 112 485 103', 6],
+            ['M-4 128 C62 137 146 120 218 129 S373 124 485 134', 8],
+            ['M-4 154 C72 146 154 159 238 149 S384 157 485 148', 5],
+          ];
+          g.strokeStyle = '#62756a';
+          for (const [path, thickness] of claySeams) {
+            g.lineWidth = thickness;
+            g.stroke(new Path2D(path));
+          }
+        }
+
+        const cell = fineGrid ? 12 : 31;
+        g.beginPath();
+        for (let x = 0; x <= span; x += cell) {
+          g.moveTo(x, 0);
+          g.lineTo(x, 258);
+        }
+        for (let depth = 0; depth <= 258; depth += cell) {
+          g.moveTo(0, depth);
+          g.lineTo(span, depth);
+        }
+        g.strokeStyle = fineGrid ? '#413b2b65' : '#55422d8c';
+        g.lineWidth = fineGrid ? .9 : 1.2;
+        g.stroke();
+        g.restore();
+      }
+
+      function drawRock(g) {
+        const left = [70, 222];
+        const ridge = [550, 402];
+        const right = [1030, 222];
+        const faces = [[left, ridge], [ridge, right]];
+        const thickness = 258;
+        const colors = [
+          ['#547368', '#d1ac6e', '#3f645c'],
+          ['#45645b', '#b29a68', '#36564f'],
+        ];
+        function edge(start, end, boundary) {
+          return Array.from({length: 45}, (_, i) => {
+            const t = i / 44;
+            const x = start[0] + (end[0] - start[0]) * t;
+            const position = (x - left[0]) / (right[0] - left[0]);
+            const center = thickness / 2 + 10 * Math.sin(tau * position - .5);
+            const halfCollector = 23 + 23 * Math.sin(Math.PI * position) ** 2;
+            const depths = [0, center - halfCollector, center + halfCollector, thickness];
+            return [x, start[1] + (end[1] - start[1]) * t + depths[boundary]];
+          });
+        }
+        faces.forEach(([start, end], face) => {
+          for (let layer = 0; layer < colors[face].length; layer++) {
+            const top = edge(start, end, layer);
+            const bottom = edge(start, end, layer + 1);
+            polygon(g, [...top, ...bottom.reverse()], colors[face][layer], '#eddfb244');
+            g.save();
+            g.clip();
+            for (let i = 0; i < 190; i++) {
+              const x = start[0] + ((i * 113.79 + layer * 19) % 480);
+              const y = Math.min(start[1], end[1]) + (i * 63.43) % 438;
+              line(g, x, y, x + 1.5 + i % 4, y + .5, '#f0dfaa1a', 1);
+            }
+            if (layer === 1) drawCollectorTexture(g, start, end, face === 1);
+            g.restore();
+          }
+          polygon(g, [[start[0], start[1] + 258], [end[0], end[1] + 258], [end[0], end[1] + 268], [start[0], start[1] + 268]], '#162a34', '#aa8c5b');
+        });
+        line(g, 550, 402, 550, 670, '#dbc79a55');
+        label(g, 'Глины', 550, 446, '#e0e9ce', 15);
+        g.fillStyle = '#253331df';
+        g.beginPath();
+        g.roundRect(498, 523, 104, 26, 4);
+        g.fill();
+        label(g, 'Коллектор', 550, 536, '#f2dfb4', 16);
+        label(g, 'Глины', 550, 623, '#e0e9ce', 15);
+
+        const surface = [left, [550, 42], right, ridge];
+        const ground = g.createLinearGradient(0, 48, 0, 400);
+        ground.addColorStop(0, '#527977');
+        ground.addColorStop(1, '#29484c');
+        polygon(g, surface, ground, '#b4a37c');
+        g.save();
+        g.clip();
+        for (const {x} of wells) {
+          g.fillStyle = '#93867077';
+          g.beginPath();
+          g.ellipse(x, 290, 66, 23, 0, 0, tau);
+          g.fill();
+        }
+        for (let i = 0; i < 210; i++) {
+          const x = 70 + (i * 163.17) % 960;
+          const y = 42 + (i * 31.29) % 360;
+          line(g, x, y, x + 3 + i % 3, y + 1.2, '#dae7c41e', .8);
+        }
+        g.restore();
+        line(g, left[0], left[1], ridge[0], ridge[1], '#c9b587');
+        line(g, ridge[0], ridge[1], right[0], right[1], '#c9b587');
+        let treeSeed = 2397;
+        function forestRandom() {
+          treeSeed = (Math.imul(1664525, treeSeed) + 1013904223) >>> 0;
+          return treeSeed / 4294967296;
+        }
+        const forest = Array.from({length: 92}, (_, index) => {
+          const u = .05 + .90 * forestRandom();
+          const v = .05 + .90 * forestRandom();
+          const x = 550 + 480 * (u - v);
+          const y = 42 + 180 * (u + v);
+          return {x, y, size: 24 + index % 13 + y * .037, shade: index % 3};
+        }).filter(({x, y}) => !wells.some(well => Math.abs(well.x - x) < 76 && y > 150));
+        forest.sort((a, b) => a.y - b.y);
+        forest.forEach(({x, y, size, shade}) => drawPine(g, x, y, size, shade));
+      }
+
+      function drawWell(g, well) {
+        const {x, track, name} = well;
+        const bottom = trackTop + trackHeight + 10;
+        const casing = g.createLinearGradient(x - casingHalfWidth, 0, x + casingHalfWidth, 0);
+        casing.addColorStop(0, '#546c67');
+        casing.addColorStop(.12, '#15272d');
+        casing.addColorStop(.77, '#0d2027');
+        casing.addColorStop(1, '#4d6964');
+        g.fillStyle = casing;
+        g.fillRect(x - casingHalfWidth, 310, 2 * casingHalfWidth, bottom - 310);
+        line(g, x - casingHalfWidth, 311, x - casingHalfWidth, bottom, '#d2b78a', 2.5);
+        line(g, x + casingHalfWidth, 311, x + casingHalfWidth, bottom, '#98b2a8', 2.5);
+        line(g, x - casingHalfWidth, bottom, x + casingHalfWidth, bottom, '#c8a778', 2.2);
+
+        polygon(g, [[x - 47, 307], [x, 283], [x + 47, 307], [x, 331]], '#2b4449', '#c0ab7d');
+        const railColor = '#d7b47a';
+        const towerTop = pulleyY - 6;
+        const towerBase = 303;
+        function towerHalf(y) {
+          return 10 + 33 * (y - towerTop) / (towerBase - towerTop);
+        }
+        line(g, x - 43, towerBase, x - 10, towerTop, railColor, 5);
+        line(g, x + 43, towerBase, x + 10, towerTop, railColor, 5);
+        for (let y = towerTop; y < towerBase; y += 22) {
+          const next = Math.min(y + 22, towerBase);
+          const topHalf = towerHalf(y);
+          const nextHalf = towerHalf(next);
+          line(g, x - topHalf, y, x + topHalf, y, '#c5ad82', 2.6);
+          line(g, x - topHalf, y, x + nextHalf, next, '#a48c65', 2.2);
+          line(g, x + topHalf, y, x - nextHalf, next, '#a48c65', 2.2);
+        }
+        const flange = g.createLinearGradient(x - 27, 0, x + 27, 0);
+        flange.addColorStop(0, '#8e7249');
+        flange.addColorStop(.4, '#d7bc83');
+        flange.addColorStop(1, '#947d55');
+        g.fillStyle = flange;
+        g.fillRect(x - 27, 297, 54, 14);
+        g.fillStyle = '#d7bb82';
+        g.beginPath();
+        g.ellipse(x, 298, 27, 7, 0, 0, tau);
+        g.fill();
+        g.fillStyle = '#12232c';
+        g.beginPath();
+        g.ellipse(x, 298, 18, 4, 0, 0, tau);
+        g.fill();
+        g.fillStyle = '#e0b97b';
+        g.beginPath();
+        g.arc(x, pulleyY, 8.5, 0, tau);
+        g.fill();
+        g.fillStyle = '#12232c';
+        g.beginPath();
+        g.arc(x, pulleyY, 3.6, 0, tau);
+        g.fill();
+        label(g, name, x, 172, '#f1dfbd', 18);
+
+        g.fillStyle = '#0e2029ed';
+        g.fillRect(track, trackTop - 22, trackWidth, trackHeight + 26);
+        g.lineWidth = 1;
+        g.strokeStyle = '#9aa298';
+        g.strokeRect(track, trackTop - 22, trackWidth, trackHeight + 26);
+        label(g, 'SP log', track + trackWidth / 2, trackTop - 11, '#dfded0', 14);
+        for (let step = 0; step <= 4; step++) {
+          const y = trackTop + trackHeight * step / 4;
+          line(g, track, y, track + trackWidth, y, '#a0b4b135');
+          const leftTrack = x < width / 2;
+          label(g, String(maximumDepth * step / 4), leftTrack ? track - 8 : track + trackWidth + 8, y, '#afc1c4', 12, leftTrack ? 'right' : 'left');
+        }
+        for (let step = 1; step < 4; step++) {
+          const x = track + trackWidth * step / 4;
+          line(g, x, trackTop, x, trackTop + trackHeight, '#9cb3b025');
+        }
+        label(g, 'Глубина, м', track + trackWidth / 2, bottom + 14, '#c8d5d4', 12);
+      }
+
+      const backdrop = document.createElement('canvas');
+      backdrop.width = width * 2;
+      backdrop.height = height * 2;
+      const staticContext = backdrop.getContext('2d');
+      staticContext.scale(2, 2);
+      drawRock(staticContext);
+      wells.forEach(well => drawWell(staticContext, well));
+
+      function drawProbe(well, y) {
+        const x = well.x;
+        const top = y - 39;
+        line(ctx, x, pulleyY + 5, x, top, '#dac8a2', 1.5);
+        ctx.save();
+        ctx.shadowColor = '#ffd087';
+        ctx.shadowBlur = 12;
+        const housing = ctx.createLinearGradient(x - 23, 0, x + 23, 0);
+        housing.addColorStop(0, '#8d6b42');
+        housing.addColorStop(.35, '#ecc787');
+        housing.addColorStop(.63, '#c49f63');
+        housing.addColorStop(1, '#745b3d');
+        ctx.fillStyle = housing;
+        ctx.beginPath();
+        ctx.roundRect(x - 23, top, 46, 39, [8, 8, 13, 13]);
+        ctx.fill();
+        ctx.restore();
+        line(ctx, x - 21, top + 10, x + 21, top + 10, '#253a3e', 3);
+        line(ctx, x - 20, y - 11, x + 20, y - 11, '#253a3e', 3);
+        line(ctx, x - 10, y - 4, x + 10, y - 4, '#e2f4c2', 1.6);
+      }
+
+      function drawTrack(well, index, depth) {
+        const probeY = trackTop + trackHeight * depth;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(well.track + 1, probeY, trackWidth - 2, trackHeight * (1 - depth));
+        ctx.clip();
+        for (const interval of comparison) {
+          if (depth > interval.start) continue;
+          const top = trackTop + trackHeight * interval.start;
+          const bandHeight = trackHeight * (interval.end - interval.start);
+          ctx.fillStyle = interval.similar ? '#2f9e70a0' : '#b4605899';
+          ctx.fillRect(well.track, top, trackWidth, bandHeight);
+          const border = interval.similar ? '#a0edc0' : '#f2b0a2';
+          ctx.shadowBlur = 7;
+          ctx.shadowColor = border;
+          line(ctx, well.track + 2, top, well.track + 2, top + bandHeight, border, 2.3);
+          ctx.shadowBlur = 0;
+          line(ctx, well.track, top, well.track + trackWidth, top, border + '66');
+        }
+        ctx.strokeStyle = well.color;
+        ctx.lineWidth = 2.1;
+        ctx.lineJoin = 'round';
+        ctx.stroke(traces[index]);
+        ctx.restore();
+
+        if (depth < 1) {
+          const x = pointX(index, depth);
+          ctx.save();
+          ctx.setLineDash([3, 4]);
+          line(ctx, well.x, probeY, x, probeY, '#e6d7b47d', 1.1);
+          ctx.restore();
+          ctx.fillStyle = well.color;
+          ctx.beginPath();
+          ctx.arc(x, probeY, 2.9, 0, tau);
+          ctx.fill();
+        }
+        drawProbe(well, probeY);
+      }
+
+      const motion = matchMedia('(prefers-reduced-motion: reduce)');
+      let elapsed = 0;
+      let lastTime = null;
+      let scale = 1;
+      let xOffset = 0;
+      let yOffset = 0;
+
+      function render() {
+        const depth = motion.matches ? 0 : 1 - Math.min(1, elapsed / recordingDuration);
+        ctx.resetTransform();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(scale, 0, 0, scale, xOffset, yOffset);
+        ctx.drawImage(backdrop, 0, 0, width, height);
+        wells.forEach((well, index) => drawTrack(well, index, depth));
+        canvas.dataset.depth = depth.toFixed(4);
+        canvas.dataset.similar = String(comparison.filter(interval => interval.similar && depth <= interval.start).length);
+        canvas.dataset.different = String(comparison.filter(interval => !interval.similar && depth <= interval.start).length);
+      }
+
+      function fit() {
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+        canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+        scale = Math.min(canvas.width / width, canvas.height / height);
+        xOffset = (canvas.width - width * scale) / 2;
+        yOffset = (canvas.height - height * scale) / 2;
+        render();
+      }
+
+      function frame(now) {
+        if (lastTime !== null && !document.hidden && !motion.matches) {
+          elapsed = (elapsed + Math.min(now - lastTime, 80)) % cycleDuration;
+          render();
+        }
+        lastTime = now;
+        requestAnimationFrame(frame);
+      }
+
+      new ResizeObserver(fit).observe(canvas);
+      document.addEventListener('visibilitychange', () => { lastTime = null; });
+      motion.addEventListener('change', render);
+      fit();
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

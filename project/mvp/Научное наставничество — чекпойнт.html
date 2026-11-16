@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Научное наставничество</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background: radial-gradient(ellipse at 25% 0%, #29434a, #152a34 55%, #101e28);
+      color: #f0e7d5;
+      font: 15px/1.45 'Segoe UI', sans-serif;
+    }
+    main { max-width: 1420px; margin: auto; padding: clamp(16px, 3.2vw, 42px); }
+    h1 { margin: 0; font: 400 clamp(31px, 5vw, 52px)/1.08 Georgia, serif; }
+    .byline { margin: 9px 0 20px; color: #bdcecc; }
+    .checkpoint {
+      display: grid;
+      grid-template-columns: minmax(0, 1.95fr) minmax(0, 1fr);
+      overflow: hidden;
+      border: 1px solid #577078;
+      border-radius: 14px;
+      background: #192e37;
+      box-shadow: 0 22px 58px #07161d63;
+    }
+    figure {
+      min-width: 0;
+      margin: 0;
+      padding: clamp(14px, 2.3vw, 27px);
+      background: linear-gradient(162deg, #223944, #162b36);
+    }
+    h2 { margin: 0 0 14px; font: 400 clamp(21px, 2.45vw, 29px)/1.14 Georgia, serif; }
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 940 / 500;
+      border: 1px solid #4c676f;
+      border-radius: 8px;
+      background: #142934;
+    }
+    figcaption { margin-top: 10px; color: #c2d3ce; font-size: 13px; }
+    .projects { min-width: 0; padding: clamp(16px, 2.3vw, 27px); border-left: 1px solid #4c626a; }
+    .projects ul { margin: 0; padding: 0; list-style: none; }
+    .projects li { padding: 9px 0; border-top: 1px solid #40585f; }
+    .projects strong { display: block; color: #eed6ac; font-weight: 600; }
+    .projects p { margin: 2px 0 0; color: #d1dfdb; font-size: 14px; }
+    @media (max-width: 880px) {
+      .checkpoint { grid-template-columns: minmax(0, 1fr); }
+      .projects { border-left: 0; border-top: 1px solid #4c626a; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Научное наставничество</h1>
+    <p class="byline">Дипломные работы студентов под моим наставничеством</p>
+    <div class="checkpoint">
+      <figure aria-labelledby="geochemistry-title" aria-describedby="geochemistry-note">
+        <h2 id="geochemistry-title">Кластеры скважин и хроматограммы</h2>
+        <canvas id="geochemistry" role="img" aria-label="На схеме месторождения три цветные группы скважин. В каждой группе обведена скважина-представитель. Стрелка ведёт от неё к хроматограмме её пробы нефти. По горизонтали хроматограмм показано время удерживания, по вертикали — относительный отклик детектора."></canvas>
+        <figcaption id="geochemistry-note">В каждом кластере обведена скважина, чья проба ближе всего к центроиду по долям площадей пиков. Данные демонстрационные.</figcaption>
+      </figure>
+      <section class="projects" aria-labelledby="project-goals">
+        <h2 id="project-goals">Цели дипломных работ</h2>
+        <ul>
+          <li><strong>Никита Калинин</strong><p>Разработать методику на основе теории графов для автоматизированного определения фаций и интерпретации обстановок осадконакопления терригенных отложений по данным ГИС.</p></li>
+          <li><strong>Рафаэль Абдуллаев</strong><p>Разработать модель прогноза дебита после ГРП, выбрав наиболее точный метод регрессии на валидационной выборке.</p></li>
+          <li><strong>Данил Чигаров</strong><p>Разработать инструмент прогнозирования значения целевой функции по параметрам гидродинамической модели, чтобы до запуска адаптации отсеивать варианты с высокой ожидаемой невязкой.</p></li>
+          <li><strong>Камиль Исхаков</strong><p>Разработать методику автоматизированной корреляции пластов по сейсмотрассам для выделения и прослеживания целевого интервала между скважинами.</p></li>
+          <li><strong>Филипп Галиев</strong><p>Оценить применимость кластеризации геохимических данных для группировки скважин месторождения по составу проб нефти.</p></li>
+        </ul>
+      </section>
+    </div>
+  </main>
+  <script>
+    'use strict';
+
+    const canvas = document.querySelector('#geochemistry');
+    const context = canvas.getContext('2d');
+    const width = 940;
+    const height = 500;
+    const map = {x: 248, y: 39, width: 444, height: 414};
+    const chartWidth = 183;
+    const chartHeight = 94;
+    const chartTop = 95;
+    const chartStep = 205;
+    const palette = ['#8fdbb9', '#efd089', '#aebded'];
+    const mapCenters = [[.24,.25], [.72,.34], [.30,.75]];
+    const offsets = [[-.034,.008], [.03,-.038], [-.006,.04], [.048,.025], [-.042,-.031]];
+    const peakTimes = [.085, .225, .36, .49, .64, .77, .895];
+    const peakWidths = [.014, .022, .018, .025, .02, .016, .024];
+    const clusterProfiles = [
+      [.12,.89,.16,.10,.11,.10,.14],
+      [.12,.12,.74,.81,.14,.12,.10],
+      [.10,.13,.12,.14,.35,.58,.87],
+    ];
+
+    // Select a synthetic well in each group by distance to its mean peak-area shares.
+    const groups = mapCenters.map(([centerX, centerY], group) => {
+      const wells = offsets.map(([offsetX, offsetY], index) => {
+        const peaks = clusterProfiles[group].map((amplitude, peak) =>
+          amplitude + .07 * Math.sin((index + 1) * (peak + 1) * .81 + group * 2.1)
+        );
+        const areas = peaks.map((amplitude, peak) => amplitude * peakWidths[peak]);
+        const total = areas.reduce((sum, area) => sum + area, 0);
+        return {
+          x: map.x + (centerX + offsetX + .013 * Math.sin(2 * group + index)) * map.width,
+          y: map.y + (centerY + offsetY + .01 * Math.cos(3 * group + index)) * map.height,
+          peaks,
+          shares: areas.map(area => area / total),
+          color: palette[group],
+        };
+      });
+      const mean = peakTimes.map((_, peak) =>
+        wells.reduce((sum, well) => sum + well.shares[peak], 0) / wells.length
+      );
+      const distance = well => mean.reduce((sum, share, peak) => sum + (well.shares[peak] - share) ** 2, 0);
+      const representative = wells.reduce((closest, well) => distance(well) < distance(closest) ? well : closest);
+      return {wells, representative, side: centerX < .46 ? 'left' : 'right'};
+    });
+
+    const wells = groups.flatMap(group => group.wells);
+    const extent = [
+      [map.x, map.y], [map.x + map.width, map.y],
+      [map.x + map.width, map.y + map.height], [map.x, map.y + map.height],
+    ];
+
+    function clipCell(cell, well, other) {
+      const normalX = other.x - well.x;
+      const normalY = other.y - well.y;
+      const midpointX = (well.x + other.x) / 2;
+      const midpointY = (well.y + other.y) / 2;
+      const distance = ([x, y]) => normalX * (x - midpointX) + normalY * (y - midpointY);
+      const clipped = [];
+      cell.forEach((point, index) => {
+        const next = cell[(index + 1) % cell.length];
+        const start = distance(point);
+        const finish = distance(next);
+        if (start <= 0) clipped.push(point);
+        if ((start <= 0) !== (finish <= 0)) {
+          const fraction = start / (start - finish);
+          clipped.push([point[0] + fraction * (next[0] - point[0]), point[1] + fraction * (next[1] - point[1])]);
+        }
+      });
+      return clipped;
+    }
+
+    const cells = wells.map(well =>
+      wells.reduce((cell, other) => other === well ? cell : clipCell(cell, well, other), extent)
+    );
+    const charts = ['left', 'right'].flatMap((side, column) =>
+      groups.filter(group => group.side === side)
+        .sort((a, b) => a.representative.y - b.representative.y)
+        .map(({representative}, row) => ({
+          representative,
+          number: (column ? 2 : 0) + row + 1,
+          x: side === 'left' ? 14 : width - chartWidth - 14,
+          y: chartTop + row * chartStep,
+          direction: side === 'left' ? -1 : 1,
+        }))
+    );
+
+    function trace(points, color, lineWidth) {
+      context.beginPath();
+      points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
+      context.strokeStyle = color;
+      context.lineWidth = lineWidth;
+      context.stroke();
+    }
+
+    function fill(points, color, edge) {
+      context.beginPath();
+      points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
+      context.closePath();
+      context.fillStyle = color;
+      context.fill();
+      if (edge) {
+        context.strokeStyle = edge;
+        context.lineWidth = 1;
+        context.stroke();
+      }
+    }
+
+    function label(value, x, y, color, size, align = 'left') {
+      context.fillStyle = color;
+      context.font = '600 ' + size + 'px Segoe UI, sans-serif';
+      context.textAlign = align;
+      context.fillText(value, x, y);
+    }
+
+    function dot(x, y, radius, color, edge, lineWidth = 1) {
+      context.beginPath();
+      context.arc(x, y, radius, 0, Math.PI * 2);
+      if (color) {
+        context.fillStyle = color;
+        context.fill();
+      }
+      if (edge) {
+        context.strokeStyle = edge;
+        context.lineWidth = lineWidth;
+        context.stroke();
+      }
+    }
+
+    function drawMap() {
+      context.fillStyle = '#1e3540';
+      context.fillRect(map.x, map.y, map.width, map.height);
+      cells.forEach((cell, index) => fill(cell, wells[index].color + '4c', '#8db1b34f'));
+      context.strokeStyle = '#78939b';
+      context.lineWidth = 1;
+      context.strokeRect(map.x, map.y, map.width, map.height);
+      label('Карта скважин', map.x + map.width / 2, 26, '#d1dfdb', 18, 'center');
+    }
+
+    function drawChart({representative, number, x, y}, elapsed) {
+      const {color, peaks} = representative;
+      const plotLeft = x + 12;
+      const plotRight = x + chartWidth - 12;
+      const plotTop = y + 30;
+      const baseline = y + chartHeight - 12;
+      context.fillStyle = '#1c3540';
+      context.fillRect(x, y, chartWidth, chartHeight);
+      context.strokeStyle = color + '73';
+      context.lineWidth = 1;
+      context.strokeRect(x, y, chartWidth, chartHeight);
+      label('Кластер ' + number, plotLeft, y + 21, color, 17);
+      for (let grid = 1; grid <= 4; grid += 1) {
+        const at = plotLeft + grid * (plotRight - plotLeft) / 5;
+        trace([[at, plotTop], [at, baseline]], '#7d9d9c37', 1);
+      }
+      trace([[plotLeft, plotTop], [plotLeft, baseline], [plotRight, baseline]], '#a3bfbb60', 1);
+      const profile = Array.from({length: 180}, (_, index) => {
+        const time = index / 179;
+        const amplitude = peaks.reduce((sum, peak, component) =>
+          sum + peak * Math.exp(-(((time - peakTimes[component]) / peakWidths[component]) ** 2)), 0
+        );
+        const response = amplitude + .026 + .012 * Math.sin(index * .85) ** 2;
+        return [plotLeft + time * (plotRight - plotLeft), baseline - response * (baseline - plotTop)];
+      });
+      const phase = (elapsed + (number - 1) * 460) % 4200;
+      const fraction = Math.min(1, phase / 2850);
+      const visible = profile.slice(0, 1 + Math.floor(fraction * (profile.length - 1)));
+      const [tipX, tipY] = visible.at(-1);
+      fill([[plotLeft, baseline], ...visible, [tipX, baseline]], color + '32');
+      context.save();
+      context.shadowColor = color;
+      context.shadowBlur = 9;
+      trace(visible, color, 2);
+      dot(tipX, tipY, 2.7, color);
+      context.restore();
+    }
+
+    function drawArrow({representative, x, y, direction}) {
+      const {color, x: wellX, y: wellY} = representative;
+      const startX = wellX + direction * 8;
+      const endX = direction < 0 ? x + chartWidth + 3 : x - 3;
+      const endY = y + chartHeight / 2;
+      context.beginPath();
+      context.moveTo(startX, wellY);
+      context.bezierCurveTo(startX + direction * 55, wellY, endX - direction * 34, endY, endX, endY);
+      context.strokeStyle = '#132733';
+      context.lineWidth = 4;
+      context.stroke();
+      context.strokeStyle = color;
+      context.lineWidth = 1.7;
+      context.stroke();
+      fill([[endX, endY], [endX - direction * 8, endY - 4], [endX - direction * 8, endY + 4]], color);
+    }
+
+    function draw(elapsed) {
+      const scale = Math.min(canvas.width / width, canvas.height / height);
+      context.setTransform(scale, 0, 0, scale, (canvas.width - width * scale) / 2, (canvas.height - height * scale) / 2);
+      context.clearRect(0, 0, width, height);
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      drawMap();
+      charts.forEach(chart => drawChart(chart, elapsed));
+      charts.forEach(drawArrow);
+      wells.forEach(well => dot(well.x, well.y, 3.8, well.color, '#142934', 1.4));
+      charts.forEach(({representative: well}) => {
+        dot(well.x, well.y, 8, null, '#142934', 4);
+        dot(well.x, well.y, 8, null, well.color, 2);
+      });
+      for (const x of [14 + chartWidth / 2, width - 14 - chartWidth / 2]) {
+        label('Время удерживания', x, 477, '#bed2ce', 15, 'center');
+      }
+    }
+
+    function resize() {
+      const ratio = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+      canvas.height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+      draw(2850);
+    }
+
+    new ResizeObserver(resize).observe(canvas);
+    resize();
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const start = performance.now();
+      function animate(now) {
+        draw(now - start);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.sg-checkpoint{width:100%;height:100%;isolation:isolate}
+.sg-scene{display:block;width:100%;height:100%;overflow:visible}
+.sg-selection-aura{opacity:0;transition:opacity .7s}
+.sg-rim-light{opacity:.14;transition:opacity .7s}
+.sg-checkpoint[data-selected=true] .sg-selection-aura{opacity:1}
+.sg-checkpoint[data-selected=true] .sg-rim-light{opacity:.85}
+.sg-earth-label{font:500 11px 'Segoe UI',Arial,sans-serif;letter-spacing:2px;fill:#e1d4b4;opacity:.7;paint-order:stroke;stroke:#304c50;stroke-width:3px}
+.sg-screen-label{font:500 4.8px 'Segoe UI',Arial,sans-serif;letter-spacing:.35px;fill:#93b1a8}
+@media(prefers-reduced-motion:reduce){.sg-checkpoint *{animation:none!important;transition:none!important}}

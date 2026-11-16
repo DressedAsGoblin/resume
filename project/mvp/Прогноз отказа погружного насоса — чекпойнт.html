@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Оценка ресурсной способности погружного насоса</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      color: #f0e7d5;
+      background: radial-gradient(ellipse at 24% 0%, #29434a, #152a34 55%, #101e28);
+      font: 15px/1.4 'Segoe UI', sans-serif;
+    }
+    main { max-width: 1380px; margin: auto; padding: clamp(16px, 3.2vw, 42px); }
+    h1 { margin: 0 0 20px; font: 400 clamp(29px, 4.4vw, 49px)/1.1 Georgia, serif; }
+    h2 { margin: 0; font: 400 clamp(21px, 2.4vw, 28px)/1.14 Georgia, serif; }
+    .scene {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+      overflow: hidden;
+      border: 1px solid #577078;
+      border-radius: 14px;
+      box-shadow: 0 22px 58px #07161d63;
+    }
+    .well, .forecast { min-width: 0; padding: clamp(16px, 2.15vw, 28px); }
+    .well { background: linear-gradient(157deg, #253c44, #172c36); }
+    .forecast { border-left: 1px solid #4d666d; background: linear-gradient(150deg, #1e343d, #162a34); }
+    canvas { display: block; width: 100%; }
+    #well { aspect-ratio: 550 / 474; }
+    #plot { aspect-ratio: 580 / 310; }
+    .inputs {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      margin: 16px 0 19px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #4a6469;
+      color: #d3e1dc;
+      font-size: 13px;
+    }
+    .signal { color: #e9bf83; }
+    .model {
+      border: 1px solid #50676b;
+      border-radius: 5px;
+      padding: 3px 8px;
+      background: #142a31;
+    }
+    .forecast[data-telemetry] .model { color: #bdf0da; border-color: #83c7ad; background: #254841; }
+    .axis-label { margin: 0; color: #cfddd7; font-size: 13px; }
+    .axis-x { text-align: center; }
+    .estimate {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 57px;
+      margin: 14px 0 0;
+      padding: 9px 12px;
+      border-left: 2px solid #a6e4c9;
+      background: #24423e;
+      color: #dceae3;
+      visibility: hidden;
+    }
+    .estimate[data-ready] { visibility: visible; }
+    .estimate strong { color: #a6e4c9; font: 400 30px/1 Georgia, serif; white-space: nowrap; }
+    footer { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 10px; }
+    footer p { margin: 0; color: #bdcecb; font-size: 13px; }
+    button {
+      border: 1px solid #607b80;
+      border-radius: 7px;
+      padding: 7px 12px;
+      background: #243b45;
+      color: #e4eeea;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: #304b52; }
+    button:focus-visible { outline: 2px solid #a0e7ca; outline-offset: 3px; }
+    @media (max-width: 830px) {
+      .scene { grid-template-columns: minmax(0, 1fr); }
+      .forecast { border-left: 0; border-top: 1px solid #4d666d; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Оценка ресурсной способности погружного насоса</h1>
+    <div class="scene">
+      <section class="well" aria-label="Разрез скважины">
+        <canvas id="well" role="img" aria-label="Разрез скважины. Жидкость из продуктивного пласта поступает к погружному насосу и поднимается по трубам к устью. Сигналы телеметрии идут от насоса к наземному регистратору."></canvas>
+      </section>
+      <section class="forecast" aria-labelledby="forecast-title">
+        <h2 id="forecast-title">Построение эмпирической функции безотказной работы насоса</h2>
+        <p class="inputs"><span>Телеметрия насоса</span><span class="signal" aria-hidden="true">→</span><span class="model">Модель прогноза</span></p>
+        <canvas id="plot" role="img" aria-label="Иллюстративная ступенчатая кривая безотказной работы от 100 до 0 процентов. На 12 месяцах — 75 процентов."></canvas>
+        <p class="axis-label axis-x">Месяцы с момента оценки</p>
+        <p class="estimate"><span>Вероятность отказа в ближайшие 12 месяцев</span><strong>25%</strong></p>
+      </section>
+    </div>
+  </main>
+  <script>
+    'use strict';
+
+    const wellCanvas = document.querySelector('#well');
+    const plotCanvas = document.querySelector('#plot');
+    const well = wellCanvas.getContext('2d');
+    const plot = plotCanvas.getContext('2d');
+    const forecast = document.querySelector('.forecast');
+    const estimate = document.querySelector('.estimate');
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const wellSize = {width: 550, height: 474};
+    const plotSize = {width: 580, height: 310};
+    const water = '#83dccf';
+    const amber = '#ebbd7e';
+    const mint = '#a6e4c9';
+    const annualHorizon = 12;
+    const fullHorizon = 60;
+    const annualSurvival = .75;
+    const curveStart = 3.25;
+    const curveDuration = 4.8;
+    const annualMark = curveStart + curveDuration * annualHorizon / fullHorizon;
+    const guideDuration = .65;
+    const end = curveStart + curveDuration + .65;
+    const phase = (time, start, duration) => Math.max(0, Math.min(1, (time - start) / duration));
+
+    function shape(ctx, geometry, fill, stroke, width = 1) {
+      const path = new Path2D(geometry);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(path); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width; ctx.stroke(path); }
+    }
+
+    function line(ctx, points, color, width = 1) {
+      ctx.beginPath();
+      points.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.stroke();
+    }
+
+    function dot(ctx, x, y, radius, fill) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+
+    function label(ctx, text, x, y, color, size, align = 'left') {
+      ctx.fillStyle = color;
+      ctx.font = '600 ' + size + 'px Segoe UI, sans-serif';
+      ctx.textAlign = align;
+      ctx.fillText(text, x, y);
+    }
+
+    function route(points) {
+      const distances = [0];
+      for (let index = 1; index < points.length; index += 1) {
+        const [x, y] = points[index];
+        const [priorX, priorY] = points[index - 1];
+        distances.push(distances[index - 1] + Math.hypot(x - priorX, y - priorY));
+      }
+      return {
+        points,
+        length: distances.at(-1),
+        at(distance) {
+          const next = Math.max(1, distances.findIndex(value => value >= distance));
+          const fraction = (distance - distances[next - 1]) / (distances[next] - distances[next - 1]);
+          return points[next - 1].map((coordinate, axis) => coordinate + fraction * (points[next][axis] - coordinate));
+        },
+      };
+    }
+
+    const fluid = route([[145, 391], [239, 391], [255, 386], [255, 370], [269, 356], [269, 104], [264, 99], [134, 99]]);
+    const telemetry = route([[285, 363], [285, 119], [305, 105], [394, 105], [409, 92], [435, 92]]);
+
+    const background = document.createElement('canvas');
+    background.width = wellSize.width * 2;
+    background.height = wellSize.height * 2;
+    const staticWell = background.getContext('2d');
+    staticWell.scale(2, 2);
+
+    function drawWellSection(ctx) {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      shape(ctx, 'M25 143 72 106 523 106 500 143Z', '#50645d', '#77897b');
+      shape(ctx, 'M25 143 H500 V454 H25Z', '#435956', '#7b8f82');
+      shape(ctx, 'M500 143 523 106 V418 L500 454Z', '#263f42', '#657e78');
+      shape(ctx, 'M25 207 C150 194 205 218 322 208 S444 196 500 201 V454 H25Z', '#526665', '#83988a');
+      shape(ctx, 'M25 269 C130 283 226 256 325 264 S433 276 500 269 V454 H25Z', '#3c5357', '#778f8a');
+      shape(ctx, 'M25 333 C123 345 205 319 315 330 S423 327 500 323 V454 H25Z', '#71664c', '#ab9a70');
+      shape(ctx, 'M25 417 C110 409 234 431 319 418 S445 403 500 414 V454 H25Z', '#40514e', '#958867');
+      shape(ctx, 'M500 201 523 170 M500 269 523 236 M500 323 523 288 M500 414 523 378', null, '#778e818f');
+      for (let index = 0; index < 630; index += 1) {
+        const x = 29 + (index * 413 + index * index * 11) % 466;
+        const y = 151 + (index * 209 + index * index * 17) % 297;
+        ctx.fillStyle = index % 3 ? '#142c333f' : '#cfc19b40';
+        ctx.fillRect(x, y, 2 + index % 4, 1);
+      }
+
+      shape(ctx, 'M246 143 H292 V421 Q292 432 281 435 H257 Q246 432 246 421Z', '#1a3138', '#9ba6a0', 2.2);
+      shape(ctx, 'M253 146 V332 M285 145 V332', null, '#68817f', 1.7);
+      shape(ctx, 'M246 374 235 369 M246 385 234 381 M246 397 233 398 M292 374 303 369 M292 385 304 381 M292 397 305 398', null, '#a4b8a6', 1.5);
+      shape(ctx, 'M262 145 H276 V289 H262Z', '#435b60', '#a1aaa2', 1.4);
+      shape(ctx, 'M259 286 H279 L282 299 V345 L277 355 H261 L256 345 V299Z', '#476c6b', '#a3b5a6', 1.7);
+      shape(ctx, 'M261 355 H277 V375 H261Z M259 375 H279 V407 Q279 412 269 413 Q259 412 259 407Z', '#3c5359', '#95a79f', 1.4);
+      shape(ctx, 'M258 301 H280 M258 312 H280 M258 323 H280 M258 334 H280 M261 362 H277 M261 369 H277 M263 383 H275 M263 389 H275 M263 395 H275', null, '#adbcab', 1.2);
+      shape(ctx, 'M224 144 237 132 H298 L312 144Z', '#708174', '#9aa99b');
+      shape(ctx, 'M257 134 H281 V104 H257Z M261 104 H277 V94 H261Z', '#5b7475', '#a6b1a4', 1.8);
+      shape(ctx, 'M251 128 H287 M253 117 H285 M255 108 H283', null, '#a7b4a8', 2.4);
+      line(ctx, [[269, 124], [269, 104], [264, 99], [134, 99]], '#a3aba0', 8);
+      line(ctx, [[269, 124], [269, 104], [264, 99], [134, 99]], '#39535a', 4.8);
+
+      shape(ctx, 'M409 111 421 103 H464 L474 112Z', '#435855', '#809287');
+      shape(ctx, 'M422 105 V77 H464 V105Z', '#384f52', '#859f94', 1.5);
+      shape(ctx, 'M429 83 H457 V97 H429Z', '#142f36', '#668a84');
+      shape(ctx, 'M432 91 437 90 441 94 446 86 452 91 455 90', null, '#91d5b6', 1.2);
+      line(ctx, telemetry.points, '#b5925b95', 1.4);
+      line(ctx, fluid.points, '#62baaf9e', 2.5);
+      line(ctx, [[372, 388], [300, 388], [309, 382], [300, 388], [309, 394]], '#7ad0c1', 1.6);
+
+      label(ctx, 'Добываемая жидкость', 29, 59, '#d9ede4', 17);
+      line(ctx, [[128, 67], [128, 83], [148, 97]], '#a1c3b6', 1.2);
+      label(ctx, 'Телеметрия', 416, 58, '#ecd0a7', 17, 'center');
+      line(ctx, [[416, 66], [432, 76]], '#c8a875', 1.2);
+      label(ctx, 'Погружной насос', 38, 286, '#d9ede4', 17);
+      line(ctx, [[181, 281], [210, 281], [256, 316]], '#a1c3b6', 1.2);
+      label(ctx, 'Продуктивный пласт', 39, 443, '#eddbb4', 17);
+      line(ctx, [[171, 427], [171, 407]], '#cfb986', 1.1);
+    }
+
+    drawWellSection(staticWell);
+
+    function drawWell(time) {
+      well.clearRect(0, 0, wellSize.width, wellSize.height);
+      well.drawImage(background, 0, 0, wellSize.width, wellSize.height);
+      for (let index = 0; index < 12; index += 1) {
+        const distance = (index * fluid.length / 12 + time * 108) % fluid.length;
+        dot(well, ...fluid.at(distance), 2.5, water);
+      }
+      if (time >= 1.5 && time < 3.15) {
+        const distance = phase(time, 1.5, 1.65) * telemetry.length;
+        const [x, y] = telemetry.at(distance);
+        dot(well, x, y, 7, '#ebbd7e3b');
+        dot(well, x, y, 3.6, amber);
+      }
+      if (time >= 3.15) dot(well, 460, 101, 2.8, mint);
+    }
+
+    // Illustrative survival estimates, with a fixed annual value.
+    const survivalSteps = [
+      [0,1], [1,.973], [2,.948], [3,.921], [4,.895], [5,.866], [6,.84],
+      [7,.824], [8,.808], [9,.791], [10,.778], [11,.766], [annualHorizon,annualSurvival],
+      [14,.708], [16,.667], [19,.629], [21,.588], [24,.54], [26,.508],
+      [29,.46], [32,.425], [35,.399], [37,.374], [40,.34], [42,.304],
+      [43,.243], [45,.19], [47,.141], [50,.085], [54,.039], [fullHorizon,0],
+    ];
+    const bounds = {left: 39, right: 550, top: 25, bottom: 270};
+    const xAt = months => bounds.left + months / fullHorizon * (bounds.right - bounds.left);
+    const yAt = probability => bounds.bottom - probability * (bounds.bottom - bounds.top);
+
+    function drawPlot(time) {
+      const {left, right, top, bottom} = bounds;
+      const markVisible = time >= annualMark;
+      plot.clearRect(0, 0, plotSize.width, plotSize.height);
+      plot.fillStyle = '#152b35';
+      plot.fillRect(left, top, right - left, bottom - top);
+      for (const probability of [0, .25, .5, .75, 1]) {
+        const y = yAt(probability);
+        line(plot, [[left, y], [right, y]], '#47636b');
+        label(plot, Math.round(probability * 100) + '%', left - 9, y + 5, probability === annualSurvival && markVisible ? amber : '#b6c9c7', 16, 'right');
+      }
+      for (const month of [0, 12, 24, 36, 48, fullHorizon]) {
+        const x = xAt(month);
+        line(plot, [[x, top], [x, bottom]], '#39555f');
+        label(plot, String(month), x, bottom + 25, month === annualHorizon && markVisible ? amber : '#b6c9c7', 16, 'center');
+      }
+      line(plot, [[left, top], [left, bottom], [right, bottom]], '#91a7aa', 1.2);
+
+      const months = fullHorizon * phase(time, curveStart, curveDuration);
+      if (months > 0) {
+        const points = [[left, top]];
+        for (let index = 1; index < survivalSteps.length; index += 1) {
+          const [month, value] = survivalSteps[index];
+          const previous = survivalSteps[index - 1][1];
+          points.push([xAt(Math.min(month, months)), yAt(previous)]);
+          if (month > months) break;
+          points.push([xAt(month), yAt(value)]);
+        }
+        plot.beginPath();
+        plot.moveTo(left, top);
+        points.forEach(([x, y]) => plot.lineTo(x, y));
+        plot.lineTo(xAt(months), bottom);
+        plot.lineTo(left, bottom);
+        plot.closePath();
+        plot.fillStyle = '#79c9ae26';
+        plot.fill();
+        line(plot, points, mint, 3);
+      }
+      if (months === fullHorizon) dot(plot, right, bottom, 3.6, mint);
+
+      if (markVisible) {
+        const reveal = phase(time, annualMark, guideDuration);
+        const x = xAt(annualHorizon);
+        const y = yAt(annualSurvival);
+        plot.setLineDash([6, 5]);
+        line(plot, [[x, y], [x - (x - left) * reveal, y]], amber, 1.4);
+        line(plot, [[x, y], [x, y + (bottom - y) * reveal]], amber, 1.4);
+        plot.setLineDash([]);
+        dot(plot, x, y, 9, '#ebbd7e45');
+        dot(plot, x, y, 4.8, amber);
+        label(plot, '75%', x - 11, y - 12, amber, 20, 'right');
+      }
+    }
+
+    let current = 0;
+    let frame;
+
+    function render(time) {
+      current = time;
+      drawWell(time);
+      drawPlot(time);
+      forecast.toggleAttribute('data-telemetry', time >= 3.15);
+      estimate.toggleAttribute('data-ready', time >= annualMark + guideDuration);
+    }
+
+    function resize() {
+      const ratio = Math.min(devicePixelRatio || 1, 2);
+      for (const [canvas, context, size] of [[wellCanvas, well, wellSize], [plotCanvas, plot, plotSize]]) {
+        canvas.width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+        canvas.height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+        context.setTransform(canvas.width / size.width, 0, 0, canvas.height / size.height, 0, 0);
+      }
+      render(current);
+    }
+
+    function replay() {
+      cancelAnimationFrame(frame);
+      if (motion.matches) { render(end); return; }
+      const start = performance.now();
+      render(0);
+      function advance(now) {
+        const elapsed = Math.min(end, ((now - start) / 1000) % (end + 2.5));
+        render(elapsed);
+        frame = requestAnimationFrame(advance);
+      }
+      frame = requestAnimationFrame(advance);
+    }
+
+    const observer = new ResizeObserver(resize);
+    observer.observe(wellCanvas);
+    observer.observe(plotCanvas);
+    motion.addEventListener('change', replay);
+    resize();
+    replay();
+  </script>
+</body>
+</html>

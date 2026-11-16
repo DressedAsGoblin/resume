@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Исхаков — корреляция пластов по сейсмике</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; color:#f1e8d7; background:radial-gradient(ellipse at 25% 0%,#29434a,#142833 56%,#111f28); font:15px/1.45 'Segoe UI',sans-serif; }
+    main { max-width:1320px; margin:auto; padding:clamp(16px,3.4vw,43px); }
+    h1 { margin:0; font:400 clamp(27px,4vw,47px)/1.12 Georgia,serif; }
+    .byline { margin:8px 0 22px; color:#bed0ce; }
+    .scene { display:grid; grid-template-columns:minmax(0,2.65fr) minmax(245px,1fr); border:1px solid #5b7379; border-radius:12px; overflow:hidden; background:#192e37; box-shadow:0 16px 46px #07182165; }
+    .profile { min-width:0; margin:0; padding:20px 19px 13px; }
+    h2 { margin:0 0 10px; font:400 clamp(19px,2.2vw,25px)/1.15 Georgia,serif; }
+    canvas { display:block; width:100%; aspect-ratio:760 / 414; background:#142934; border-radius:6px; }
+    .key { display:flex; flex-wrap:wrap; gap:4px 18px; margin:10px 0 0; color:#c6d5d0; font-size:13px; }
+    .key span::before { content:''; display:inline-block; width:15px; height:3px; margin-right:7px; vertical-align:middle; background:var(--ink); }
+    .method { padding:20px 19px 16px; border-left:1px solid #49636b; background:#172b34; }
+    .method ol { margin:0; padding:0; list-style:none; }
+    .method li { margin:0 0 11px; padding:3px 0 3px 10px; border-left:2px solid #50676a; }
+    .method li[data-active] { border-color:#83d5b6; background:#203e42; }
+    .method li strong { display:block; font-size:14px; }
+    .method li p, .result p { margin:3px 0 0; color:#bfd0cd; font-size:13px; }
+    .result { margin-top:15px; padding-top:11px; border-top:1px solid #52686b; }
+    .result strong { color:#a0dfc4; font-size:14px; }
+    footer { display:flex; align-items:center; justify-content:space-between; gap:13px; margin-top:10px; }
+    footer p { margin:0; color:#c0cfcc; font-size:13px; }
+    button { flex:none; padding:6px 12px; color:#ebf2ed; font:inherit; border:1px solid #688188; border-radius:6px; background:#263d47; cursor:pointer; }
+    button:hover { background:#38525b; }
+    button:focus-visible { outline:2px solid #9be8c8; outline-offset:2px; }
+    @media (max-width:850px) { .scene { grid-template-columns:1fr; } .method { border-left:0; border-top:1px solid #49636b; } }
+    @media (max-width:480px) { .profile { padding:13px 8px 11px; } .profile h2,.key { margin-left:5px; } }
+    @media (prefers-reduced-motion:reduce) { button { display:none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Корреляция пластов по ГИС и сейсмике</h1>
+    <p class="byline">Дипломная работа Камиля Исхакова · совместное научное руководство</p>
+    <div class="scene">
+      <figure class="profile">
+        <h2>Профиль между скважинами А и Б</h2>
+        <canvas role="img" aria-label="По синтетической сейсмограмме в скважине А выбирают ближайшее по форме окно на первой трассе. Поиск продолжают на соседних трассах и сопоставляют результат с синтетикой скважины Б."></canvas>
+        <figcaption class="key"><span style="--ink:#ecc087">Синтетика из ГИС</span><span style="--ink:#9bbec8">Сейсмические трассы</span><span style="--ink:#8fddbe">Сопоставленный интервал</span></figcaption>
+      </figure>
+      <section class="method" aria-labelledby="method-title">
+        <h2 id="method-title">Метод Исхакова</h2>
+        <ol>
+          <li data-step="0"><strong>Синтетическая сейсмограмма</strong><p>По акустическому и плотностному каротажу моделируем отклик целевого интервала.</p></li>
+          <li data-step="1"><strong>Поиск по DTW</strong><p>Двигаем окно по ближайшей трассе. Меньшее расстояние DTW означает более похожую форму сигнала.</p></li>
+          <li data-step="2"><strong>Межскважинная корреляция</strong><p>Найденный интервал служит шаблоном для следующей трассы. У скважины Б сопоставляем результат с её синтетикой.</p></li>
+        </ol>
+        <div class="result"><strong>Проверка на сейсмическом профиле</strong><p>На участке А–Б без разлома интервалы по DTW проследили сейсмический отражатель. В работе также рассмотрены участки с разломами.</p></div>
+      </section>
+    </div>
+    <footer><p>Трассы на схеме демонстрационные.</p></footer>
+  </main>
+  <script>
+    'use strict';
+    const canvas = document.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    const media = matchMedia('(prefers-reduced-motion: reduce)');
+    const steps = [...document.querySelectorAll('[data-step]')];
+    const W = 760, H = 414, plotTop = 67, plotBottom = 372, samples = 151;
+    const traces = 11, halfWindow = 12;
+    const columns = Array.from({length: traces + 2}, (_, i) => 52 + 54.5 * i);
+    const center = i => 62 + 2.3 * i + Math.sin(i * .46) * 2;
+    const yAt = index => plotTop + (plotBottom - plotTop) * index / (samples - 1);
+    const wavelet = (i, scale) => (1 - 2 * (i / scale) ** 2) * Math.exp(-((i / scale) ** 2));
+    const series = columns.map((_, trace) => Array.from({length: samples}, (_, i) => {
+      const s = i - center(trace);
+      return .9 * wavelet(s + 3, 4.1 + .13 * trace) - .52 * wavelet(s - 6, 4.5)
+        + .43 * wavelet(s + 27, 6) + .55 * wavelet(s - 30, 6) - .34 * wavelet(s - 51, 7)
+        + .16 * Math.sin(s * .25 + trace * .18) + .075 * Math.sin(i * .58 + trace * .24);
+    }));
+
+    function dtw(a, b) {
+      let prior = Array(b.length + 1).fill(Infinity);
+      prior[0] = 0;
+      for (const left of a) {
+        const row = [Infinity];
+        b.forEach((right, j) => { row[j + 1] = Math.abs(left - right) + Math.min(row[j], prior[j], prior[j + 1]); });
+        prior = row;
+      }
+      return prior[b.length];
+    }
+
+    const part = (trace, middle) => series[trace].slice(middle - halfWindow, middle + halfWindow + 1);
+    const matches = [Math.round(center(0))];
+    const trials = [];
+    for (let trace = 1; trace <= traces; trace += 1) {
+      const last = matches.at(-1);
+      const options = Array.from({length: 21}, (_, i) => last - 8 + i);
+      const template = part(trace - 1, last);
+      const best = options.reduce((winner, point) => {
+        const cost = dtw(template, part(trace, point));
+        return cost < winner.cost ? {point, cost} : winner;
+      }, {point: last, cost: Infinity});
+      trials.push(options);
+      matches.push(best.point);
+    }
+    matches.push(Math.round(center(columns.length - 1)));
+
+    function line(points, color, width = 1, dash = []) {
+      ctx.beginPath();
+      points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    function label(value, x, y, color = '#bad0cd', size = 14) {
+      ctx.fillStyle = color;
+      ctx.font = `600 ${size}px Segoe UI, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(value, x, y);
+    }
+
+    function windowAt(column, middle, color, dashed = false) {
+      const x = columns[column];
+      const y = yAt(middle - halfWindow);
+      const h = yAt(middle + halfWindow) - y;
+      ctx.fillStyle = dashed ? '#efba7855' : '#72c5a82c';
+      ctx.fillRect(x - 15, y, 30, h);
+      line([[x - 15,y],[x + 15,y],[x + 15,y + h],[x - 15,y + h],[x - 15,y]], color, 1.8, dashed ? [4, 4] : []);
+    }
+
+    let elapsed = 0;
+    let frame;
+    const end = 10.7;
+    const scanStart = 1.45, scanEnd = 3.8, traceStep = .48;
+    const completion = scanEnd + (traces - 1) * traceStep + .62;
+    const clamp = value => Math.max(0, Math.min(1, value));
+
+    function draw(time) {
+      elapsed = time;
+      ctx.clearRect(0, 0, W, H);
+      const backdrop = ctx.createLinearGradient(0, plotTop, 0, plotBottom);
+      backdrop.addColorStop(0, '#203c46');
+      backdrop.addColorStop(1, '#142933');
+      ctx.fillStyle = backdrop;
+      ctx.fillRect(20, plotTop, W - 40, plotBottom - plotTop);
+
+      for (let k = 1; k < 21; k += 1) {
+        const points = Array.from({length: 42}, (_, n) => {
+          const p = n / 41;
+          return [20 + p * 720, plotTop + 10 + k * 12 + p * 23 + 3 * Math.sin(p * 9 + k * .22)];
+        });
+        line(points, k % 3 ? '#81a7aa15' : '#c698651d', k % 3 ? 2 : 5);
+      }
+      [0, 30, 60, 90, 120, 150].forEach(value => line([[20,yAt(value)],[740,yAt(value)]], '#77989c3b', 1));
+      const accepted = time < scanEnd ? 0 : Math.min(traces, 1 + Math.floor((time - scanEnd) / traceStep));
+      const last = time >= completion ? columns.length - 1 : accepted;
+      if (last > 0) {
+        const upper = matches.slice(0, last + 1).map((value, i) => [columns[i], yAt(value - halfWindow)]);
+        const lower = matches.slice(0, last + 1).map((value, i) => [columns[i], yAt(value + halfWindow)]);
+        ctx.beginPath();
+        [...upper, ...lower.toReversed()].forEach(([x,y], i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+        ctx.closePath();
+        ctx.fillStyle = '#78c6a727';
+        ctx.fill();
+        line(upper, '#7ec4ac96', 1.2, [4, 4]);
+        line(lower, '#7ec4ac96', 1.2, [4, 4]);
+      }
+
+      series.forEach((amplitudes, i) => {
+        const x = columns[i];
+        const well = i === 0 || i === columns.length - 1;
+        line([[x,plotTop],[x,plotBottom]], '#78939946');
+        line(amplitudes.map((value, n) => [x + value * 17, yAt(n)]), well ? '#edc18b' : '#a0bfca', well ? 1.9 : 1.45);
+        if (well) label(i === 0 ? 'Скв. А' : 'Скв. Б', x, 43, '#efc78e', 17);
+        else label(String(i - 1), x, 53, '#b8cbca', 16);
+        if (i <= last) windowAt(i, matches[i], well ? '#e7bf88' : '#8fe0bf');
+      });
+      if (time >= scanStart && accepted < traces) {
+        const next = accepted + 1;
+        const options = trials[next - 1];
+        const progress = next === 1 ? clamp((time - scanStart) / (scanEnd - scanStart)) : (time - scanEnd) % traceStep / traceStep;
+        windowAt(next, options[Math.min(options.length - 1, Math.floor(progress * options.length))], '#f4c682', true);
+      }
+      const caption = time < scanStart ? 'Целевой интервал в скважине А'
+        : time < scanEnd ? 'Скользящее окно на трассе 0'
+        : time < completion ? 'Интервалы с минимальным расстоянием DTW'
+        : 'Сопоставление с синтетической сейсмограммой скважины Б';
+      label(caption, W / 2, 397, '#d7e6df', 18);
+      steps.forEach((item, index) => item.toggleAttribute('data-active', index === (time < scanStart ? 0 : time < scanEnd ? 1 : 2)));
+    }
+
+    function resize() {
+      const ratio = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.round(canvas.clientWidth * ratio);
+      canvas.height = Math.round(canvas.clientHeight * ratio);
+      ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
+      draw(elapsed);
+    }
+
+    function replay() {
+      cancelAnimationFrame(frame);
+      if (media.matches) return draw(end);
+      const start = performance.now();
+      draw(0);
+      function tick(now) {
+        const time = Math.min(end, ((now - start) / 1000) % (end + 2.5));
+        draw(time);
+        frame = requestAnimationFrame(tick);
+      }
+      frame = requestAnimationFrame(tick);
+    }
+
+    media.addEventListener('change', replay);
+    new ResizeObserver(resize).observe(canvas);
+    resize();
+    replay();
+  </script>
+</body>
+</html>
